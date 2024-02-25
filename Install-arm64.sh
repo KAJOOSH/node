@@ -5,7 +5,7 @@ then
     sudo apt update
 	sudo apt-get update; sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y; sudo DEBIAN_FRONTEND=noninteractive  apt-get install curl socat git -y
 	sudo DEBIAN_FRONTEND=noninteractive  apt install wget unzip -y
-    sudo curl -fsSL https://get.docker.com | sh
+ 	sudo curl -fsSL https://get.docker.com | sh
 	sudo ufw disable
 fi
 

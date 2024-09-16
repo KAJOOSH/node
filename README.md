@@ -4,5 +4,5 @@ wget https://raw.githubusercontent.com/KAJOOSH/node/main/Install.sh && chmod +x 
 ```
 
 ```bash
-wget https://raw.githubusercontent.com/KAJOOSH/node/main/1.sh?token=GHSAT0AAAAAACXKWGDFBXS5HJDFKWMDAFOUZXHX4YQ && chmod +x 1.sh && bash 1.sh
+wget https://raw.githubusercontent.com/KAJOOSH/node/main/1.sh && chmod +x 1.sh && bash 1.sh
 ```

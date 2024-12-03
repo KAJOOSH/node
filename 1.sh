@@ -15,7 +15,7 @@ then
 	sudo ufw allow from 91.107.178.21
 fi
 
-sudo git clone https://github.com/Gozargah/Marzban-node
+sudo git clone https://github.com/KAJOOSH/marzban-node
 
 sudo mkdir -p /var/lib/marzban/assets/
 sudo wget -O /var/lib/marzban/assets/geosite.dat https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat
@@ -27,7 +27,7 @@ sudo wget https://github.com/XTLS/Xray-core/releases/download/v24.11.30/Xray-lin
 sudo unzip Xray-linux-64.zip;
 sudo rm Xray-linux-64.zip;
 
-cd ~/Marzban-node
+cd ~/marzban-node
 
 sudo echo "services:
   marzban-node:

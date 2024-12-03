@@ -11,6 +11,7 @@ then
 	sudo ufw allow 62051
 	sudo ufw allow 22
 	sudo ufw allow 80
+ 	sudo ufw allow 443
 	sudo ufw allow from 91.107.178.21
 fi
 

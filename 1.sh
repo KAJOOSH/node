@@ -83,7 +83,7 @@ bash "$FETCH_IPV6_SCRIPT"
 bash "$BLOCK_SCRIPT"
 
 echo "Setting up cron job..."
-CRON_JOB="0 0 * * * $FETCH_IPV4_SCRIPT && $FETCH_IPV6_SCRIPT && $BLOCK_SCRIPT >> /var/log/block_iran.log 2>&1"
+CRON_JOB="0 0 * * * $FETCH_IPV4_SCRIPT && $FETCH_IPV6_SCRIPT && $BLOCK_SCRIPT >> /var/log/block_all_except_iran.log 2>&1"
 
 (crontab -l 2>/dev/null; echo "$CRON_JOB") | crontab -
 

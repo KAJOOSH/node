@@ -6,6 +6,7 @@ then
 	sudo apt-get update; sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y; sudo DEBIAN_FRONTEND=noninteractive  apt-get install curl socat git -y
 	sudo DEBIAN_FRONTEND=noninteractive apt install wget unzip -y
  	sudo curl -fsSL https://get.docker.com | sh
+  	sudo apt install iptables-persistent
 	#sudo ufw enable -y
 	#sudo ufw allow 62050
 	#sudo ufw allow 62051
@@ -59,9 +60,9 @@ cd ..
 mkdir block-all-except-iran
 cd ~/block-all-except-iran
 
-FETCH_IPV4_SCRIPT_URL="https://raw.githubusercontent.com/username/repository/main/fetch_iran_ips_v4.sh"
-FETCH_IPV6_SCRIPT_URL="https://raw.githubusercontent.com/username/repository/main/fetch_iran_ips_v6.sh"
-BLOCK_SCRIPT_URL="https://raw.githubusercontent.com/username/repository/main/block_all_except_iran.sh"
+FETCH_IPV4_SCRIPT_URL="https://raw.githubusercontent.com/KAJOOSH/node/refs/heads/main/fetch_iran_ips_v4.sh"
+FETCH_IPV6_SCRIPT_URL="https://raw.githubusercontent.com/KAJOOSH/node/refs/heads/main/fetch_iran_ips_v6.sh"
+BLOCK_SCRIPT_URL="https://raw.githubusercontent.com/KAJOOSH/node/refs/heads/main/block_all_except_iran.sh"
 
 FETCH_IPV4_SCRIPT="~/block-all-except-iran/fetch_iran_ips_v4.sh"
 FETCH_IPV6_SCRIPT="~/block-all-except-iran/fetch_iran_ips_v6.sh"

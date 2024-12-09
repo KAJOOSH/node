@@ -36,11 +36,11 @@ for URL in "${URLS[@]}"; do
     echo "" >> $OUTPUT_FILE
 done
 
-echo -e "${Green} Removing empty lines and comments...${Color_Off}"
+echo -e "${Green}Removing empty lines and comments...${Color_Off}"
 sed -i '/^$/d' $OUTPUT_FILE
 sed -i '/^#/d' $OUTPUT_FILE
 
-echo -e "${Green} Removing duplicate entries...${Color_Off}"
+echo -e "${Green}Removing duplicate entries...${Color_Off}"
 sort -u $OUTPUT_FILE -o $OUTPUT_FILE
 
 echo -e "IP list saved to ${Green} $OUTPUT_FILE ${Color_Off}"

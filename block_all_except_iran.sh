@@ -42,4 +42,6 @@ fi
 iptables-save > /etc/iptables/rules.v4
 ip6tables-save > /etc/iptables/rules.v6
 
+iptables -A INPUT -s 91.107.178.21 -j ACCEPT
+
 echo "Rules applied successfully for both IPv4 and IPv6."

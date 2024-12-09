@@ -1,5 +1,17 @@
 #!/bin/bash
 
+# Reset
+Color_Off='\033[0m'       # Text Reset
+# Regular Colors
+Black='\033[0;30m'        # Black
+Red='\033[0;31m'          # Red
+Green='\033[0;32m'        # Green
+Yellow='\033[0;33m'       # Yellow
+Blue='\033[0;34m'         # Blue
+Purple='\033[0;35m'       # Purple
+Cyan='\033[0;36m'         # Cyan
+White='\033[0;37m'        # White
+
 if ! command -v docker &> /dev/null
 then
     	sudo apt update
@@ -49,11 +61,7 @@ sudo echo "services:
 
 sudo docker compose down && sudo docker compose up -d
 
-sleep 10;
-
-sudo cat /var/lib/marzban-node/ssl_cert.pem
-
-sudo echo -e $'\e[32mMarzban Node is Up and Running successfully.\e[0m'
+sleep 5;
 
 DEST_DIR="/usr/local/block-all-except-iran"
 
@@ -68,7 +76,7 @@ FETCH_IPV4_SCRIPT="$DEST_DIR/fetch_iran_ips_v4.sh"
 FETCH_IPV6_SCRIPT="$DEST_DIR/fetch_iran_ips_v6.sh"
 BLOCK_SCRIPT="$DEST_DIR/block_all_except_iran.sh"
 
-echo "Downloading scripts from GitHub..."
+echo -e "${Yellow}Downloading scripts from GitHub...${Color_Off}"
 wget -q -O "$FETCH_IPV4_SCRIPT" "$FETCH_IPV4_SCRIPT_URL"
 wget -q -O "$FETCH_IPV6_SCRIPT" "$FETCH_IPV6_SCRIPT_URL"
 wget -q -O "$BLOCK_SCRIPT" "$BLOCK_SCRIPT_URL"
@@ -77,15 +85,19 @@ chmod +x "$FETCH_IPV4_SCRIPT"
 chmod +x "$FETCH_IPV6_SCRIPT"
 chmod +x "$BLOCK_SCRIPT"
 
-echo "Running the fetched scripts..."
+echo -e "${Yellow}Running the fetched scripts...${Color_Off}"
 bash "$FETCH_IPV4_SCRIPT"
 bash "$FETCH_IPV6_SCRIPT"
 bash "$BLOCK_SCRIPT"
 
-echo "Setting up cron job..."
+echo -e "${Yellow}Setting up cron job...${Color_Off}"
 CRON_JOB="0 0 * * * $FETCH_IPV4_SCRIPT && $FETCH_IPV6_SCRIPT && $BLOCK_SCRIPT >> /var/log/block_all_except_iran.log 2>&1"
 
 (crontab -l 2>/dev/null; echo "$CRON_JOB") | crontab -
 
-echo "Setup completed. Cron job installed and scripts executed."
+echo -e "${Green}Cron job installed and scripts executed.${Color_Off}"
+
+sudo cat /var/lib/marzban-node/ssl_cert.pem
+
+sudo echo -e "${Green}Marzban Node is Up and Running successfully.${Color_Off}"
 

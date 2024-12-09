@@ -6,13 +6,13 @@ then
 	sudo apt-get update; sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y; sudo DEBIAN_FRONTEND=noninteractive  apt-get install curl socat git -y
 	sudo DEBIAN_FRONTEND=noninteractive apt install wget unzip -y
  	sudo curl -fsSL https://get.docker.com | sh
-	sudo ufw enable -y
-	sudo ufw allow 62050
-	sudo ufw allow 62051
-	sudo ufw allow 22
-	sudo ufw allow 80
- 	sudo ufw allow 443
-	sudo ufw allow from 91.107.178.21
+	#sudo ufw enable -y
+	#sudo ufw allow 62050
+	#sudo ufw allow 62051
+	#sudo ufw allow 22
+	#sudo ufw allow 80
+ 	#sudo ufw allow 443
+	#sudo ufw allow from 91.107.178.21
 fi
 
 sudo git clone https://github.com/Gozargah/Marzban-node
@@ -53,4 +53,38 @@ sleep 10;
 sudo cat /var/lib/marzban-node/ssl_cert.pem
 
 sudo echo -e $'\e[32mMarzban Node is Up and Running successfully.\e[0m'
+
+cd ..
+
+mkdir block-all-except-iran
+cd ~/block-all-except-iran
+
+FETCH_IPV4_SCRIPT_URL="https://raw.githubusercontent.com/username/repository/main/fetch_iran_ips_v4.sh"
+FETCH_IPV6_SCRIPT_URL="https://raw.githubusercontent.com/username/repository/main/fetch_iran_ips_v6.sh"
+BLOCK_SCRIPT_URL="https://raw.githubusercontent.com/username/repository/main/block_all_except_iran.sh"
+
+FETCH_IPV4_SCRIPT="~/block-all-except-iran/fetch_iran_ips_v4.sh"
+FETCH_IPV6_SCRIPT="~/block-all-except-iran/fetch_iran_ips_v6.sh"
+BLOCK_SCRIPT="~/block-all-except-iran/block_all_except_iran.sh"
+
+echo "Downloading scripts from GitHub..."
+wget -q -O "$FETCH_IPV4_SCRIPT" "$FETCH_IPV4_SCRIPT_URL"
+wget -q -O "$FETCH_IPV6_SCRIPT" "$FETCH_IPV6_SCRIPT_URL"
+wget -q -O "$BLOCK_SCRIPT" "$BLOCK_SCRIPT_URL"
+
+chmod +x "$FETCH_IPV4_SCRIPT"
+chmod +x "$FETCH_IPV6_SCRIPT"
+chmod +x "$BLOCK_SCRIPT"
+
+echo "Running the fetched scripts..."
+bash "$FETCH_IPV4_SCRIPT"
+bash "$FETCH_IPV6_SCRIPT"
+bash "$BLOCK_SCRIPT"
+
+echo "Setting up cron job..."
+CRON_JOB="0 0 * * * $FETCH_IPV4_SCRIPT && $FETCH_IPV6_SCRIPT && $BLOCK_SCRIPT >> /var/log/block_iran.log 2>&1"
+
+(crontab -l 2>/dev/null; echo "$CRON_JOB") | crontab -
+
+echo "Setup completed. Cron job installed and scripts executed."
 

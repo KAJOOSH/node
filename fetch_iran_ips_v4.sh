@@ -17,6 +17,9 @@ for URL in "${URLS[@]}"; do
     echo "" >> $OUTPUT_FILE
 done
 
+echo "Removing empty lines..."
+sed -i '/^$/d' $OUTPUT_FILE
+
 echo "Removing duplicate entries..."
 sort -u $OUTPUT_FILE -o $OUTPUT_FILE
 

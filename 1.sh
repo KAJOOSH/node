@@ -58,6 +58,7 @@ sudo echo -e $'\e[32mMarzban Node is Up and Running successfully.\e[0m'
 DEST_DIR="/usr/local/block-all-except-iran"
 
 mkdir -p "$DEST_DIR"
+cd "$DEST_DIR"
 
 FETCH_IPV4_SCRIPT_URL="https://raw.githubusercontent.com/KAJOOSH/node/refs/heads/main/fetch_iran_ips_v4.sh"
 FETCH_IPV6_SCRIPT_URL="https://raw.githubusercontent.com/KAJOOSH/node/refs/heads/main/fetch_iran_ips_v6.sh"

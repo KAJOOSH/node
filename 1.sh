@@ -6,7 +6,7 @@ then
 	sudo apt-get update; sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y; sudo DEBIAN_FRONTEND=noninteractive  apt-get install curl socat git -y
 	sudo DEBIAN_FRONTEND=noninteractive apt install wget unzip -y
  	sudo curl -fsSL https://get.docker.com | sh
-  	sudo apt install iptables-persistent
+  	sudo DEBIAN_FRONTEND=noninteractive apt install iptables-persistent -y
 	#sudo ufw enable -y
 	#sudo ufw allow 62050
 	#sudo ufw allow 62051

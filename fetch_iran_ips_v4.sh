@@ -6,7 +6,16 @@ URLS=(
     "https://raw.githubusercontent.com/herrbischoff/country-ip-blocks/master/ipv4/ir.cidr"
 )
 
-OUTPUT_FILE="iran_v4.zone"
+DEST_DIR="/usr/local/block-all-except-iran"
+
+if [ ! -d "$DEST_DIR" ]; then
+    mkdir -p "$DEST_DIR"
+    echo "Directory $DEST_DIR created."
+else
+    echo "Directory $DEST_DIR already exists."
+fi
+
+OUTPUT_FILE="$DEST_DIR/iran_v4.zone"
 
 > $OUTPUT_FILE
 

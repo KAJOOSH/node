@@ -55,18 +55,13 @@ sudo cat /var/lib/marzban-node/ssl_cert.pem
 
 sudo echo -e $'\e[32mMarzban Node is Up and Running successfully.\e[0m'
 
-cd ..
-
-mkdir block-all-except-iran
-cd ~/block-all-except-iran
-
 FETCH_IPV4_SCRIPT_URL="https://raw.githubusercontent.com/KAJOOSH/node/refs/heads/main/fetch_iran_ips_v4.sh"
 FETCH_IPV6_SCRIPT_URL="https://raw.githubusercontent.com/KAJOOSH/node/refs/heads/main/fetch_iran_ips_v6.sh"
 BLOCK_SCRIPT_URL="https://raw.githubusercontent.com/KAJOOSH/node/refs/heads/main/block_all_except_iran.sh"
 
-FETCH_IPV4_SCRIPT="~/block-all-except-iran/fetch_iran_ips_v4.sh"
-FETCH_IPV6_SCRIPT="~/block-all-except-iran/fetch_iran_ips_v6.sh"
-BLOCK_SCRIPT="~/block-all-except-iran/block_all_except_iran.sh"
+FETCH_IPV4_SCRIPT="/usr/local/bin/fetch_iran_ips_v4.sh"
+FETCH_IPV6_SCRIPT="/usr/local/bin/fetch_iran_ips_v6.sh"
+BLOCK_SCRIPT="/usr/local/bin/block_all_except_iran.sh"
 
 echo "Downloading scripts from GitHub..."
 wget -q -O "$FETCH_IPV4_SCRIPT" "$FETCH_IPV4_SCRIPT_URL"

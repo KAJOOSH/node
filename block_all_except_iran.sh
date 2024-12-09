@@ -1,6 +1,10 @@
 
 #!/bin/bash
 
+DEST_DIR="/usr/local/block-all-except-iran"
+V4_FILE="$DEST_DIR/iran_v4.zone"
+V6_FILE="$DEST_DIR/iran_v6.zone"
+
 iptables -F
 iptables -X
 ip6tables -F
@@ -15,17 +19,24 @@ ip6tables -A INPUT -i lo -j ACCEPT
 iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 ip6tables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 
-if [ -f iran_v4.zone ]; then
-    for IP in $(cat iran_v4.zone); do
+# اعمال قوانین برای IPv4
+if [ -f "$V4_FILE" ]; then
+    echo "Applying IPv4 rules..."
+    for IP in $(cat "$V4_FILE"); do
         iptables -A INPUT -s $IP -j ACCEPT
     done
+else
+    echo "$V4_FILE not found!"
 fi
 
-
-if [ -f iran_v6.zone ]; then
-    for IP in $(cat iran_v6.zone); do
+# اعمال قوانین برای IPv6
+if [ -f "$V6_FILE" ]; then
+    echo "Applying IPv6 rules..."
+    for IP in $(cat "$V6_FILE"); do
         ip6tables -A INPUT -s $IP -j ACCEPT
     done
+else
+    echo "$V6_FILE not found!"
 fi
 
 iptables-save > /etc/iptables/rules.v4

@@ -26,7 +26,7 @@ cd ~/Marzban-node
 sudo echo "services:
   marzban-node:
     # build: .
-    image: gozargah/marzban-node:latest
+    image: gozargah/marzban-node:v0.3.3
     restart: always
     network_mode: host
 

@@ -34,6 +34,8 @@ echo "Tag: $tag"
 echo "Operating System: $os"
 echo "Downloading from: $url"
 
+cd /var/lib/marzban/xray-core
+
 sudo wget "$url"
 
 sudo unzip -o "$filename"

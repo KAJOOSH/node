@@ -1,11 +1,10 @@
 #!/bin/bash
 
-echo "Please enter the tag (e.g., v24.12.31):"
-read tag
+default_tag="v24.11.30"
+read -p "Please enter the tag (default: $default_tag): " tag
 
 if [ -z "$tag" ]; then
-    echo "Error: Tag cannot be empty. Please run the script again and provide a valid tag."
-    exit 1
+    tag="$default_tag"
 fi
 
 echo "Please select the operating system:"

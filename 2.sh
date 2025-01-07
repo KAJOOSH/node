@@ -35,7 +35,7 @@ sudo wget -O /var/lib/marzban/assets/geoip.dat https://github.com/v2fly/geoip/re
 sudo wget -O /var/lib/marzban/assets/iran.dat https://github.com/bootmortis/iran-hosted-domains/releases/latest/download/iran.dat
 
 mkdir -p /var/lib/marzban/xray-core && cd /var/lib/marzban/xray-core
-sudo wget https://github.com/XTLS/Xray-core/releases/download/v1.8.24/Xray-linux-64.zip
+sudo wget https://github.com/XTLS/Xray-core/releases/download/v24.12.31/Xray-linux-64.zip
 sudo unzip Xray-linux-64.zip;
 sudo rm Xray-linux-64.zip;
 

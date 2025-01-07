@@ -10,5 +10,5 @@ wget https://raw.githubusercontent.com/KAJOOSH/node/main/1.sh && chmod +x 1.sh &
 wget https://raw.githubusercontent.com/KAJOOSH/node/main/2.sh && chmod +x 2.sh && bash 2.sh
 ```
 ```bash
-wget https://raw.githubusercontent.com/KAJOOSH/node/refs/heads/main/xray-update.sh && chmod +x xray-update.sh && bash xray-update.sh
+wget https://raw.githubusercontent.com/KAJOOSH/node/main/xray-update.sh && chmod +x xray-update.sh && bash xray-update.sh
 ```

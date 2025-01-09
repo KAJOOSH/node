@@ -1,6 +1,6 @@
 #!/bin/bash
 
-default_tag="v24.11.30"
+default_tag="v1.8.24"
 read -p "Please enter the tag (default: $default_tag): " tag
 
 if [ -z "$tag" ]; then

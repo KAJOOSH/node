@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "always_on": true,
+  "operation_mode": {
+    "WarpProxy": null
+  },
+  "dns_log_until": null,
+  "qlog_log_until": null
+}

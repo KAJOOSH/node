@@ -12,3 +12,6 @@ wget https://raw.githubusercontent.com/KAJOOSH/node/main/2.sh && chmod +x 2.sh &
 ```bash
 wget https://raw.githubusercontent.com/KAJOOSH/node/main/xray-update.sh && chmod +x xray-update.sh && bash xray-update.sh
 ```
+```bash
+wget https://raw.githubusercontent.com/KAJOOSH/node/refs/heads/main/warp/install.sh && chmod +x install-warp.sh && bash install-warp.sh
+```

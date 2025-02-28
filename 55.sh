@@ -1,3 +1,4 @@
+#!/bin/bash
 DEST_DIR="/usr/local/block-all-except-iran"
 
 mkdir -p "$DEST_DIR"

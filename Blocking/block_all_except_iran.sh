@@ -29,6 +29,8 @@ ip6tables -A INPUT -i lo -j ACCEPT
 iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 ip6tables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 iptables -A INPUT -s 91.107.178.21 -j ACCEPT
+iptables -A INPUT -s 10.10.10.0/24 -j ACCEPT
+iptables -A INPUT -s 172.17.0.0/16 -j ACCEPT
 
 if [ -f "$V4_FILE" ]; then
     echo -e "${Yellow}Applying IPv4 rules...${Color_Off}"

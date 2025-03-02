@@ -6,7 +6,13 @@ then
 	sudo apt-get update; sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y; sudo DEBIAN_FRONTEND=noninteractive  apt-get install curl socat git -y
 	sudo DEBIAN_FRONTEND=noninteractive apt install wget unzip -y
  	sudo curl -fsSL https://get.docker.com | sh
-	sudo ufw disable
+	sudo ufw enable -y
+	sudo ufw allow 62050
+	sudo ufw allow 62051
+	sudo ufw allow 22
+	sudo ufw allow 80
+ 	sudo ufw allow 443
+	sudo ufw allow from 91.107.178.21
 fi
 
 sudo git clone https://github.com/Gozargah/Marzban-node

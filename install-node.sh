@@ -18,7 +18,7 @@ then
 	sudo apt-get update; sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y; sudo DEBIAN_FRONTEND=noninteractive  apt-get install curl socat git -y
 	sudo DEBIAN_FRONTEND=noninteractive apt install wget unzip -y
  	sudo curl -fsSL https://get.docker.com | sh
-	sudo ufw enable -y
+	sudo ufw enable
 	sudo ufw allow 62050
 	sudo ufw allow 62051
 	sudo ufw allow 22

@@ -41,18 +41,21 @@ sudo rm Xray-linux-64.zip;
 
 cd ~/Marzban-node
 
+sudo wget https://github.com/KAJOOSH/node/raw/refs/heads/main/certificate/ssl_client_cert.pem
+
 sudo echo "services:
   marzban-node:
     # build: .
-    image: gozargah/marzban-node:v0.3.3
+    image: gozargah/marzban-node:latest
     restart: always
     network_mode: host
 
     environment:
       SSL_CERT_FILE: "/var/lib/marzban-node/ssl_cert.pem"
       SSL_KEY_FILE: "/var/lib/marzban-node/ssl_key.pem"
-      # SSL_CLIENT_CERT_FILE: "/var/lib/marzban-node/ssl_client_cert.pem"
+      SSL_CLIENT_CERT_FILE: "/var/lib/marzban-node/ssl_client_cert.pem"
       XRAY_EXECUTABLE_PATH: "/var/lib/marzban/xray-core/xray"
+      SERVICE_PROTOCOL: "rest"
     volumes:
       - /var/lib/marzban-node:/var/lib/marzban-node
       - /var/lib/marzban/assets:/usr/local/share/xray

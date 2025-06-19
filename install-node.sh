@@ -41,7 +41,7 @@ sudo rm Xray-linux-64.zip;
 
 cd ~/Marzban-node
 
-sudo wget https://github.com/KAJOOSH/node/raw/refs/heads/main/certificate/ssl_client_cert.pem
+sudo wget -O /var/lib/marzban-node/ssl_client_cert.pem https://github.com/KAJOOSH/node/raw/refs/heads/main/certificate/ssl_client_cert.pem
 
 sudo echo "services:
   marzban-node:

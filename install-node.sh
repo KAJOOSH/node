@@ -34,14 +34,15 @@ sudo wget -O /var/lib/marzban/assets/geosite.dat https://github.com/v2fly/domain
 sudo wget -O /var/lib/marzban/assets/geoip.dat https://github.com/v2fly/geoip/releases/latest/download/geoip.dat
 sudo wget -O /var/lib/marzban/assets/iran.dat https://github.com/bootmortis/iran-hosted-domains/releases/latest/download/iran.dat
 
+sudo mkdir -p /var/lib/marzban-node/
+sudo wget -O /var/lib/marzban-node/ssl_client_cert.pem https://github.com/KAJOOSH/node/raw/refs/heads/main/certificate/ssl_client_cert.pem
+
 mkdir -p /var/lib/marzban/xray-core && cd /var/lib/marzban/xray-core
 sudo wget https://github.com/XTLS/Xray-core/releases/download/v1.8.24/Xray-linux-64.zip
 sudo unzip Xray-linux-64.zip;
 sudo rm Xray-linux-64.zip;
 
 cd ~/Marzban-node
-
-sudo wget -O /var/lib/marzban-node/ssl_client_cert.pem https://github.com/KAJOOSH/node/raw/refs/heads/main/certificate/ssl_client_cert.pem
 
 sudo echo "services:
   marzban-node:

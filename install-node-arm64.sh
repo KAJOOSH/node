@@ -22,8 +22,11 @@ sudo wget -O /var/lib/marzban/assets/geosite.dat https://github.com/v2fly/domain
 sudo wget -O /var/lib/marzban/assets/geoip.dat https://github.com/v2fly/geoip/releases/latest/download/geoip.dat
 sudo wget -O /var/lib/marzban/assets/iran.dat https://github.com/bootmortis/iran-hosted-domains/releases/latest/download/iran.dat
 
+sudo mkdir -p /var/lib/marzban-node/
+sudo wget -O /var/lib/marzban-node/ssl_client_cert.pem https://github.com/KAJOOSH/node/raw/refs/heads/main/certificate/ssl_client_cert.pem
+
 mkdir -p /var/lib/marzban/xray-core && cd /var/lib/marzban/xray-core
-sudo wget https://github.com/XTLS/Xray-core/releases/download/v24.12.31/Xray-linux-arm64-v8a.zip
+sudo wget https://github.com/XTLS/Xray-core/releases/download/v1.8.24/Xray-linux-arm64-v8a.zip
 sudo unzip Xray-linux-arm64-v8a.zip;
 sudo rm Xray-linux-arm64-v8a.zip;
 
@@ -32,15 +35,16 @@ cd ~/Marzban-node
 sudo echo "services:
   marzban-node:
     # build: .
-    image: gozargah/marzban-node:v0.3.3
+    image: gozargah/marzban-node:latest
     restart: always
     network_mode: host
 
     environment:
       SSL_CERT_FILE: "/var/lib/marzban-node/ssl_cert.pem"
       SSL_KEY_FILE: "/var/lib/marzban-node/ssl_key.pem"
-      # SSL_CLIENT_CERT_FILE: "/var/lib/marzban-node/ssl_client_cert.pem"
+      SSL_CLIENT_CERT_FILE: "/var/lib/marzban-node/ssl_client_cert.pem"
       XRAY_EXECUTABLE_PATH: "/var/lib/marzban/xray-core/xray"
+      SERVICE_PROTOCOL: "rest"
     volumes:
       - /var/lib/marzban-node:/var/lib/marzban-node
       - /var/lib/marzban/assets:/usr/local/share/xray

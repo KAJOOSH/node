@@ -27,7 +27,8 @@ then
 	 sudo ufw allow 22
 	 sudo ufw allow 80
  	 sudo ufw allow 443
-  	 sudo ufw enable
+   	 sudo ufw allow 5555
+  	 sudo ufw --force enable
 fi
 
 sudo git clone https://github.com/Gozargah/Marzban-node

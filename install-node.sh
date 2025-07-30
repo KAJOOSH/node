@@ -70,6 +70,7 @@ sudo docker compose down && sudo docker compose up -d
 
 sleep 10;
 
+ip=$(curl -s https://api.ipify.org)
 sudo cat /var/lib/marzban-node/ssl_cert.pem
-
+sudo echo -e "${Green}IP: $ip ${Color_Off}"
 sudo echo -e "${Green}Marzban Node is Up and Running successfully.${Color_Off}"

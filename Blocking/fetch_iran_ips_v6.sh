@@ -11,9 +11,10 @@ Cyan='\033[0;36m'         # Cyan
 White='\033[0;37m'        # White
 
 URLS=(
-    "https://www.ipdeny.com/ipv6/ipaddresses/blocks/ir.zone"
-    "https://raw.githubusercontent.com/ipverse/rir-ip/refs/heads/master/country/ir/ipv6-aggregated.txt"
-    "https://raw.githubusercontent.com/herrbischoff/country-ip-blocks/refs/heads/master/ipv6/ir.cidr"
+    "https://raw.githubusercontent.com/KAJOOSH/iran-ip-database/refs/heads/main/output/iran_routed_ipv6.txt"
+    #"https://www.ipdeny.com/ipv6/ipaddresses/blocks/ir.zone"
+    #"https://raw.githubusercontent.com/ipverse/rir-ip/refs/heads/master/country/ir/ipv6-aggregated.txt"
+    #"https://raw.githubusercontent.com/herrbischoff/country-ip-blocks/refs/heads/master/ipv6/ir.cidr"
 )
 
 DEST_DIR="/usr/local/block-all-except-iran"

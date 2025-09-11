@@ -15,11 +15,11 @@ White='\033[0;37m'        # White
 if ! command -v docker &> /dev/null
 then
     sudo apt update
-	sudo apt-get install -y curl
- 	curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh | sudo bash
-  	sudo sed -i 's/noble/jammy/g' /etc/apt/sources.list.d/ookla_speedtest-cli.list
-   	sudo apt-get update
-	sudo apt-get install -y speedtest
+	#sudo apt-get install -y curl
+ 	#curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh | sudo bash
+  	#sudo sed -i 's/noble/jammy/g' /etc/apt/sources.list.d/ookla_speedtest-cli.list
+   	#sudo apt-get update
+	#sudo apt-get install -y speedtest
 	sudo apt-get update; sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y; sudo DEBIAN_FRONTEND=noninteractive  apt-get install curl socat git -y
 	sudo DEBIAN_FRONTEND=noninteractive apt install wget unzip -y
  	sudo curl -fsSL https://get.docker.com | sh

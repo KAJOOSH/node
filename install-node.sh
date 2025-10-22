@@ -47,7 +47,7 @@ sudo mkdir -p /var/lib/marzban-node/
 sudo wget -O /var/lib/marzban-node/ssl_client_cert.pem https://github.com/KAJOOSH/node/raw/refs/heads/main/certificate/ssl_client_cert.pem
 
 mkdir -p /var/lib/marzban/xray-core && cd /var/lib/marzban/xray-core
-sudo wget https://github.com/XTLS/Xray-core/releases/download/v25.6.8/Xray-linux-64.zip
+sudo wget https://github.com/XTLS/Xray-core/releases/download/v25.10.15/Xray-linux-64.zip
 sudo unzip Xray-linux-64.zip;
 sudo rm Xray-linux-64.zip;
 

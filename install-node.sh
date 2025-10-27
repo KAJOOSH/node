@@ -125,15 +125,18 @@ install_speedtest() {
     fi
 
     log_info "Installing Ookla Speedtest CLI for Ubuntu $ubuntu_version..."
-    run_cmd "sudo $APT_PREFIX apt-get install curl $APT_YES"
-    run_cmd "curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh | sudo bash"
 
-    if [ -f /etc/apt/sources.list.d/ookla_speedtest-cli.list ]; then
-        run_cmd "sudo sed -i 's/noble/jammy/g' /etc/apt/sources.list.d/ookla_speedtest-cli.list"
-    else
-        log_warn "Ookla repo list file not found at /etc/apt/sources.list.d/ookla_speedtest-cli.list"
-    fi
+    # نصب پیش‌نیازها
+    run_cmd "sudo $APT_PREFIX apt-get update"
+    run_cmd "sudo $APT_PREFIX apt-get install curl gnupg apt-transport-https $APT_YES"
 
+    # اضافه کردن کلید GPG
+    run_cmd "curl -fsSL https://packagecloud.io/ookla/speedtest-cli/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/ookla-speedtest-archive-keyring.gpg"
+
+    # اضافه کردن مخزن به صورت مستقیم
+    echo "deb [signed-by=/usr/share/keyrings/ookla-speedtest-archive-keyring.gpg] https://packagecloud.io/ookla/speedtest-cli/ubuntu/ jammy main" | sudo tee /etc/apt/sources.list.d/ookla_speedtest-cli.list > /dev/null
+
+    # آپدیت و نصب
     run_cmd "sudo apt-get update"
     run_cmd "sudo $APT_PREFIX apt-get install speedtest $APT_YES"
 
@@ -143,7 +146,6 @@ install_speedtest() {
         log_error "Speedtest CLI installation failed."
     fi
 }
-
 # ==========================================
 # 🚀 Function: Setup Marzban Node
 # ==========================================

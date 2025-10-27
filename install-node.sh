@@ -126,17 +126,13 @@ install_speedtest() {
 
     log_info "Installing Ookla Speedtest CLI for Ubuntu $ubuntu_version..."
 
-    # نصب پیش‌نیازها
     run_cmd "sudo $APT_PREFIX apt-get update"
     run_cmd "sudo $APT_PREFIX apt-get install curl gnupg apt-transport-https $APT_YES"
 
-    # اضافه کردن کلید GPG
     run_cmd "curl -fsSL https://packagecloud.io/ookla/speedtest-cli/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/ookla-speedtest-archive-keyring.gpg"
 
-    # اضافه کردن مخزن به صورت مستقیم
     echo "deb [signed-by=/usr/share/keyrings/ookla-speedtest-archive-keyring.gpg] https://packagecloud.io/ookla/speedtest-cli/ubuntu/ jammy main" | sudo tee /etc/apt/sources.list.d/ookla_speedtest-cli.list > /dev/null
 
-    # آپدیت و نصب
     run_cmd "sudo apt-get update"
     run_cmd "sudo $APT_PREFIX apt-get install speedtest $APT_YES"
 

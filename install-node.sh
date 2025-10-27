@@ -58,6 +58,12 @@ echo -e "${Yellow}Do you want to apply UFW security configurations (recommended)
 read -r setup_security
 
 # ==========================================
+# 🌐 Ask about Speedtest installation
+# ==========================================
+echo -e "${Yellow}Do you want to install Ookla Speedtest CLI? (y/n): ${Color_Off}"
+read -r install_speedtest_choice
+
+# ==========================================
 # 🧱 Function: Check & Install UFW
 # ==========================================
 ensure_ufw_installed() {
@@ -96,15 +102,45 @@ configure_security() {
 install_docker() {
     if ! command -v docker &>/dev/null; then
         log_warn "Docker not found. Installing Docker and dependencies..."
-
         run_cmd "sudo apt update"
         run_cmd "sudo $APT_PREFIX apt upgrade $APT_YES"
         run_cmd "sudo $APT_PREFIX apt install curl socat git wget unzip $APT_YES"
         run_cmd "sudo curl -fsSL https://get.docker.com | sh"
-
         log_success "Docker installation completed."
     else
         log_success "Docker already installed."
+    fi
+}
+
+# ==========================================
+# ⚡ Function: Install Speedtest CLI (Ubuntu 24.04+)
+# ==========================================
+install_speedtest() {
+    local ubuntu_version
+    ubuntu_version="$(lsb_release -rs 2>/dev/null || echo 0)"
+
+    if ! dpkg --compare-versions "$ubuntu_version" ge 24.04; then
+        log_warn "Ubuntu version ($ubuntu_version) is below 24.04. Skipping Speedtest installation."
+        return
+    fi
+
+    log_info "Installing Ookla Speedtest CLI for Ubuntu $ubuntu_version..."
+    run_cmd "sudo $APT_PREFIX apt-get install curl $APT_YES"
+    run_cmd "curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh | sudo bash"
+
+    if [ -f /etc/apt/sources.list.d/ookla_speedtest-cli.list ]; then
+        run_cmd "sudo sed -i 's/noble/jammy/g' /etc/apt/sources.list.d/ookla_speedtest-cli.list"
+    else
+        log_warn "Ookla repo list file not found at /etc/apt/sources.list.d/ookla_speedtest-cli.list"
+    fi
+
+    run_cmd "sudo apt-get update"
+    run_cmd "sudo $APT_PREFIX apt-get install speedtest $APT_YES"
+
+    if command -v speedtest &>/dev/null; then
+        log_success "Speedtest CLI installed successfully."
+    else
+        log_error "Speedtest CLI installation failed."
     fi
 }
 
@@ -167,6 +203,12 @@ if [[ "$setup_security" =~ ^[Yy]$ ]]; then
     configure_security
 else
     log_warn "Security configuration skipped by user."
+fi
+
+if [[ "$install_speedtest_choice" =~ ^[Yy]$ ]]; then
+    install_speedtest
+else
+    log_warn "Speedtest installation skipped by user."
 fi
 
 setup_marzban_node

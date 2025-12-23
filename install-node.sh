@@ -161,7 +161,7 @@ setup_marzban_node() {
 
     log_info "Downloading and extracting Xray-core..."
     run_cmd "sudo mkdir -p /var/lib/marzban/xray-core && cd /var/lib/marzban/xray-core"
-    run_cmd "sudo wget https://github.com/XTLS/Xray-core/releases/download/v25.6.8/Xray-linux-64.zip"
+    run_cmd "sudo wget https://github.com/XTLS/Xray-core/releases/download/v25.12.8/Xray-linux-64.zip"
     run_cmd "sudo unzip -o Xray-linux-64.zip"
     run_cmd "sudo rm Xray-linux-64.zip"
 

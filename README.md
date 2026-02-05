@@ -18,3 +18,7 @@ wget https://raw.githubusercontent.com/KAJOOSH/node/main/xray-update.sh && chmod
 ```bash
 wget https://raw.githubusercontent.com/KAJOOSH/node/refs/heads/main/warp/install-warp.sh && chmod +x install-warp.sh && bash install-warp.sh
 ```
+#### enable_root_ssh_key
+```bash
+wget https://raw.githubusercontent.com/KAJOOSH/node/refs/heads/main/enable_root_ssh_key.sh && chmod +x enable_root_ssh_key.sh && bash enable_root_ssh_key.sh
+```

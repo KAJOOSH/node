@@ -20,5 +20,5 @@ wget https://raw.githubusercontent.com/KAJOOSH/node/refs/heads/main/warp/install
 ```
 #### enable_root_ssh_key
 ```bash
-wget https://raw.githubusercontent.com/KAJOOSH/node/refs/heads/main/enable_root_ssh_key.sh && chmod +x enable_root_ssh_key.sh && bash enable_root_ssh_key.sh
+wget https://raw.githubusercontent.com/KAJOOSH/node/refs/heads/main/enable_root_ssh_key_SAFE.sh && sudo chmod +x enable_root_ssh_key_SAFE.sh && sudo bash enable_root_ssh_key_SAFE.sh
 ```

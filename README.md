@@ -22,3 +22,7 @@ wget https://raw.githubusercontent.com/KAJOOSH/node/refs/heads/main/warp/install
 ```bash
 wget https://raw.githubusercontent.com/KAJOOSH/node/refs/heads/main/enable_root_ssh_key_SAFE.sh && sudo chmod +x enable_root_ssh_key_SAFE.sh && sudo bash enable_root_ssh_key_SAFE.sh
 ```
+#### IPv6 disable
+```bash
+wget https://raw.githubusercontent.com/KAJOOSH/node/refs/heads/main/IPv6-disable.sh && sudo chmod +x IPv6-disable.sh && sudo bash IPv6-disable.sh
+```

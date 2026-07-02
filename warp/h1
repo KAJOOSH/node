@@ -27,3 +27,6 @@ sudo systemctl daemon-reload
 sudo systemctl enable warp-socat
 sudo systemctl start warp-socat
 sudo systemctl status warp-socat
+
+# نمایش تعداد متصل
+#watch -n 2 'echo ESTABLISHED: $(ss -tan state established sport = :40001 | wc -l)'

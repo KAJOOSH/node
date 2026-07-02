@@ -1,0 +1,29 @@
+warp-cli registration new
+warp-cli registration license ''
+warp-cli registration show
+
+sudo nano /etc/systemd/system/warp-socat.service
+
+
+
+[Unit]
+Description=Socat forward WARP SOCKS
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/socat TCP-LISTEN:40001,fork,reuseaddr,bind=0.0.0.0 TCP:127.0.0.1:40000
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+
+
+
+
+
+sudo systemctl daemon-reload
+sudo systemctl enable warp-socat
+sudo systemctl start warp-socat
+sudo systemctl status warp-socat

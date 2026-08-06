@@ -30,3 +30,13 @@ sudo systemctl status warp-socat
 
 # نمایش تعداد متصل
 #watch -n 2 'echo ESTABLISHED: $(ss -tan state established sport = :40001 | wc -l)'
+
+# آبدیت
+warp-cli --version
+apt-cache policy cloudflare-warp
+sudo apt-get update
+sudo DEBIAN_FRONTEND=noninteractive apt-get install --only-upgrade cloudflare-warp -y
+sudo systemctl restart warp-svc
+warp-cli --version
+warp-cli status
+

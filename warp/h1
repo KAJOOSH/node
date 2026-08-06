@@ -2,6 +2,10 @@ warp-cli registration new
 warp-cli registration license ''
 warp-cli registration show
 
+sudo systemctl restart warp-svc
+warp-cli connect
+warp-cli status
+
 sudo nano /etc/systemd/system/warp-socat.service
 
 

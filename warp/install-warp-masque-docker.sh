@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Cloudflare WARP MASQUE Docker Installer
+# Cloudflare WARP MASQUE Docker Installer v2
 #
 # This script:
 #   - Installs Docker Engine and Docker Compose on Ubuntu
@@ -121,7 +121,7 @@ wait_for_warp_cli() {
 }
 
 wait_for_warp_connection() {
-    local max_attempts=60
+    local max_attempts=20
     local attempt
     local status_output
 
@@ -136,6 +136,44 @@ wait_for_warp_connection() {
         fi
 
         sleep 2
+    done
+
+    return 1
+}
+
+connect_warp_with_retries() {
+    local max_attempts=5
+    local attempt
+
+    for attempt in $(seq 1 "${max_attempts}"); do
+        log "WARP connection attempt ${attempt}/${max_attempts}"
+
+        # Reset any incomplete connection left by the container entrypoint
+        # or by a previous transient MASQUE connection attempt.
+        docker exec "${CONTAINER_NAME}" \
+            warp-cli --accept-tos disconnect >/dev/null 2>&1 || true
+
+        sleep 3
+
+        # Reapply the required settings before every connection attempt.
+        docker exec "${CONTAINER_NAME}" \
+            warp-cli --accept-tos tunnel protocol set MASQUE
+
+        docker exec "${CONTAINER_NAME}" \
+            warp-cli --accept-tos mode warp+doh
+
+        docker exec "${CONTAINER_NAME}" \
+            warp-cli --accept-tos connect >/dev/null 2>&1 || true
+
+        if wait_for_warp_connection; then
+            return 0
+        fi
+
+        echo "WARP did not connect on attempt ${attempt}."
+        docker exec "${CONTAINER_NAME}" \
+            warp-cli --accept-tos status 2>/dev/null || true
+
+        sleep 5
     done
 
     return 1
@@ -182,7 +220,7 @@ if [[ "${ID:-}" != "ubuntu" ]]; then
 fi
 
 echo "============================================================"
-echo " Cloudflare WARP MASQUE Docker Installer"
+echo " Cloudflare WARP MASQUE Docker Installer v2"
 echo "============================================================"
 echo
 echo "Operating system: ${PRETTY_NAME}"
@@ -343,7 +381,7 @@ services:
       - "${HOST_SOCKS_ADDRESS}:${HOST_SOCKS_PORT}:${CONTAINER_SOCKS_PORT}/tcp"
 
     environment:
-      WARP_SLEEP: "5"
+      WARP_SLEEP: "2"
       GOST_ARGS: "-L :${CONTAINER_SOCKS_PORT}"
       BETA_FIX_HOST_CONNECTIVITY: "1"
 
@@ -396,6 +434,19 @@ if ! wait_for_warp_cli; then
 fi
 
 # ---------------------------------------------------------------------------
+# Allow the image entrypoint to finish its own initialization
+# ---------------------------------------------------------------------------
+#
+# warp-cli may answer before the image entrypoint has completed registration,
+# route setup, GOST startup, and its initial WARP connection attempt. Running
+# disconnect/set/connect too early can race with that initialization and leave
+# WARP in the Unable(HappyEyeballsFailed) state.
+# ---------------------------------------------------------------------------
+
+log "Waiting for the container startup sequence to settle"
+sleep 15
+
+# ---------------------------------------------------------------------------
 # Create a WARP consumer registration when needed
 # ---------------------------------------------------------------------------
 
@@ -431,41 +482,25 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Force MASQUE as the WARP tunnel protocol
-# ---------------------------------------------------------------------------
-
-log "Setting the WARP tunnel protocol to MASQUE"
-
-docker exec "${CONTAINER_NAME}" \
-    warp-cli --accept-tos tunnel protocol set MASQUE
-
-# ---------------------------------------------------------------------------
-# Enable full-tunnel mode inside the container only
+# Configure and connect WARP with retries
 # ---------------------------------------------------------------------------
 #
-# This command changes routes only inside the container. It does not modify
-# the host default route and therefore does not affect the host SSH session.
+# MASQUE may occasionally establish QUIC and then immediately close during
+# the first attempt, especially while the container networking and firewall
+# state are still settling. Retrying the complete connection sequence avoids
+# treating that transient condition as a permanent installation failure.
+#
+# Full-tunnel mode changes routes only inside the container and does not
+# modify the host default route or the host SSH path.
 # ---------------------------------------------------------------------------
 
-log "Enabling full WARP tunnel inside the container"
+log "Configuring MASQUE and connecting to Cloudflare WARP"
 
-docker exec "${CONTAINER_NAME}" \
-    warp-cli --accept-tos mode warp+doh
-
-# ---------------------------------------------------------------------------
-# Connect to Cloudflare WARP
-# ---------------------------------------------------------------------------
-
-log "Connecting to Cloudflare WARP"
-
-docker exec "${CONTAINER_NAME}" \
-    warp-cli --accept-tos connect
-
-if ! wait_for_warp_connection; then
-    echo "ERROR: WARP did not reach the Connected state."
+if ! connect_warp_with_retries; then
+    echo "ERROR: WARP did not reach the Connected state after multiple attempts."
     docker exec "${CONTAINER_NAME}" \
         warp-cli --accept-tos status || true
-    docker logs --tail 200 "${CONTAINER_NAME}" || true
+    docker logs --tail 250 "${CONTAINER_NAME}" || true
     exit 1
 fi
 

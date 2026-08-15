@@ -5,11 +5,11 @@ umask 022
 
 # ==========================================================
 # Marzban Node Professional Installer
-# Version: 3.0.0
+# Version: 3.0.1
 # Target: Ubuntu (systemd-based VPS / VM / bare metal)
 # ==========================================================
 
-readonly SCRIPT_VERSION="3.0.0"
+readonly SCRIPT_VERSION="3.0.1"
 readonly XRAY_VERSION="${XRAY_VERSION:-26.3.27}"
 readonly TRUSTED_IP="${TRUSTED_IP:-91.107.178.21}"
 readonly SERVICE_PORT="${SERVICE_PORT:-62050}"
@@ -26,6 +26,8 @@ readonly NODE_CERT_FILE="${MARZBAN_NODE_DATA_DIR}/ssl_cert.pem"
 readonly NODE_KEY_FILE="${MARZBAN_NODE_DATA_DIR}/ssl_key.pem"
 readonly IPV6_SYSCTL_FILE="/etc/sysctl.d/99-marzban-node-disable-ipv6.conf"
 readonly UFW_DEFAULT_FILE="/etc/default/ufw"
+readonly APT_LOCK_WAIT_SECONDS="${APT_LOCK_WAIT_SECONDS:-900}"
+readonly APT_RETRY_DELAY_SECONDS="${APT_RETRY_DELAY_SECONDS:-5}"
 
 # ==========================================================
 # Colors / logging
@@ -183,7 +185,7 @@ collect_choices() {
 # ==========================================================
 apt_env=()
 apt_yes=()
-apt_dpkg_opts=(-o DPkg::Lock::Timeout=180)
+apt_dpkg_opts=(-o DPkg::Lock::Timeout=600)
 APT_UPDATED=false
 
 prepare_apt_mode() {
@@ -203,23 +205,150 @@ prepare_apt_mode() {
     fi
 }
 
+package_manager_process() {
+    # This is only an early warning/wait optimization. The authoritative
+    # check remains the apt-get retry loop below because APT uses kernel
+    # advisory locks and another process can start between checks.
+    ps -eo pid=,comm=,args= 2>/dev/null | awk -v self="$$" -v parent="$PPID" '
+        {
+            pid=$1; comm=$2;
+            if (pid == self || pid == parent) next;
+            if (comm == "apt" || comm == "apt-get" || comm == "dpkg" ||
+                comm == "dpkg-deb" || comm == "unattended-upgr" ||
+                comm == "unattended-upgrade") {
+                print;
+                exit;
+            }
+        }
+    '
+}
+
+wait_for_package_manager_idle() {
+    local started now elapsed busy_line last_report=-1
+    started="$(date +%s)"
+
+    while busy_line="$(package_manager_process)" && [[ -n "$busy_line" ]]; do
+        now="$(date +%s)"
+        elapsed=$(( now - started ))
+
+        if (( elapsed >= APT_LOCK_WAIT_SECONDS )); then
+            log_error "Timed out after ${APT_LOCK_WAIT_SECONDS}s waiting for another package-manager process."
+            log_error "Still active: $busy_line"
+            return 1
+        fi
+
+        # Report immediately, then roughly every 30 seconds instead of
+        # flooding the console every retry interval.
+        if (( last_report < 0 || elapsed - last_report >= 30 )); then
+            log_warn "Another package-manager process is active; waiting instead of removing lock files."
+            log_warn "Active process: $busy_line"
+            log_info "APT wait: ${elapsed}s / ${APT_LOCK_WAIT_SECONDS}s"
+            last_report=$elapsed
+        fi
+
+        sleep "$APT_RETRY_DELAY_SECONDS"
+    done
+}
+
+apt_lock_error() {
+    grep -Eqi \
+        'Could not get lock|Unable to lock directory|Unable to acquire the dpkg frontend lock|Could not open lock file|is held by process|another process using it' \
+        <<<"$1"
+}
+
+dpkg_interrupted_error() {
+    grep -Eqi \
+        'dpkg was interrupted|you must manually run.*dpkg --configure -a' \
+        <<<"$1"
+}
+
+repair_interrupted_dpkg() {
+    local output rc
+
+    log_warn "dpkg reports an interrupted previous operation; attempting safe recovery with dpkg --configure -a."
+    wait_for_package_manager_idle || return 1
+
+    if output="$("${SUDO[@]}" "${apt_env[@]}" dpkg --configure -a 2>&1)"; then
+        [[ -n "$output" ]] && printf '%s\n' "$output"
+        log_success "Interrupted dpkg state recovered."
+        return 0
+    else
+        rc=$?
+        [[ -n "$output" ]] && printf '%s\n' "$output" >&2
+        log_error "dpkg recovery failed with exit code $rc."
+        return "$rc"
+    fi
+}
+
+apt_exec() {
+    local started now elapsed output rc
+    local recovered_dpkg=false
+    started="$(date +%s)"
+
+    wait_for_package_manager_idle || return 1
+
+    while true; do
+        log_info "Running APT command:"
+        quote_cmd "${SUDO[@]}" "${apt_env[@]}" apt-get "${apt_dpkg_opts[@]}" "$@"
+
+        # Keep the apt invocation inside an if-condition so set -e/ERR does
+        # not terminate the whole installer before we can classify/retry it.
+        if output="$("${SUDO[@]}" "${apt_env[@]}" apt-get "${apt_dpkg_opts[@]}" "$@" 2>&1)"; then
+            [[ -n "$output" ]] && printf '%s\n' "$output"
+            log_success "APT command completed."
+            return 0
+        else
+            rc=$?
+        fi
+
+        now="$(date +%s)"
+        elapsed=$(( now - started ))
+
+        if apt_lock_error "$output"; then
+            if (( elapsed >= APT_LOCK_WAIT_SECONDS )); then
+                [[ -n "$output" ]] && printf '%s\n' "$output" >&2
+                log_error "APT lock remained busy for ${APT_LOCK_WAIT_SECONDS}s; giving up safely."
+                log_error "Do NOT delete /var/lib/apt/*/lock or /var/lib/dpkg/lock files manually."
+                return "$rc"
+            fi
+
+            # Print only the useful lock-holder lines where possible.
+            log_warn "APT is currently locked by another process. Retrying automatically in ${APT_RETRY_DELAY_SECONDS}s..."
+            grep -Ei 'Could not get lock|Unable to lock directory|is held by process' <<<"$output" | head -n 3 >&2 || true
+            sleep "$APT_RETRY_DELAY_SECONDS"
+            continue
+        fi
+
+        if [[ "$recovered_dpkg" == false ]] && dpkg_interrupted_error "$output"; then
+            [[ -n "$output" ]] && printf '%s\n' "$output" >&2
+            repair_interrupted_dpkg || return "$rc"
+            recovered_dpkg=true
+            continue
+        fi
+
+        [[ -n "$output" ]] && printf '%s\n' "$output" >&2
+        log_error "APT command failed with exit code $rc."
+        return "$rc"
+    done
+}
+
 apt_update() {
     if [[ "$APT_UPDATED" == true ]]; then
         return 0
     fi
 
-    run_cmd "${SUDO[@]}" "${apt_env[@]}" apt-get "${apt_dpkg_opts[@]}" update
+    apt_exec update
     APT_UPDATED=true
 }
 
 apt_install() {
     apt_update
-    run_cmd "${SUDO[@]}" "${apt_env[@]}" apt-get "${apt_dpkg_opts[@]}" install "${apt_yes[@]}" "$@"
+    apt_exec install "${apt_yes[@]}" "$@"
 }
 
 apt_remove() {
     apt_update
-    run_cmd "${SUDO[@]}" "${apt_env[@]}" apt-get "${apt_dpkg_opts[@]}" remove "${apt_yes[@]}" "$@"
+    apt_exec remove "${apt_yes[@]}" "$@"
 }
 
 # ==========================================================

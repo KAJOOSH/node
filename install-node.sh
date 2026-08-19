@@ -6,7 +6,7 @@ IFS=$'\n\t'
 # Marzban Node Installer - Resumable Edition
 # ==========================================
 
-readonly INSTALLER_VERSION="2.1.0"
+readonly INSTALLER_VERSION="2.2.0"
 readonly XRAY_VERSION="${XRAY_VERSION:-26.3.27}"
 readonly TRUSTED_IP="${TRUSTED_IP:-91.107.178.21}"
 readonly MARZBAN_NODE_DIR="${MARZBAN_NODE_DIR:-${HOME}/Marzban-node}"
@@ -43,25 +43,36 @@ LAST_COMMAND_TEXT=""
 PROGRESS_DETAIL=""
 SPINNER_INDEX=0
 STATUS_ONLY=false
+STAGE_PROGRESS=0
+CURRENT_ACTION="Preparing installer"
+ACTIVE_OUTPUT_FILE=""
+UI_ACTIVE=false
+UI_LOG_LINES="${UI_LOG_LINES:-14}"
+RUN_STARTED_AT="$(date +%s)"
+STAGE_STARTED_AT="$(date +%s)"
 
 # ==========================================
-# Colors, quiet logging and progress UI
+# Terminal dashboard / logging UI
 # ==========================================
 if [[ -t 1 ]]; then
     C_RESET='\033[0m'
     C_RED='\033[0;31m'
     C_GREEN='\033[0;32m'
     C_YELLOW='\033[0;33m'
+    C_BLUE='\033[0;34m'
     C_CYAN='\033[0;36m'
     C_MAGENTA='\033[0;35m'
+    C_BOLD='\033[1m'
     C_DIM='\033[2m'
 else
     C_RESET=''
     C_RED=''
     C_GREEN=''
     C_YELLOW=''
+    C_BLUE=''
     C_CYAN=''
     C_MAGENTA=''
+    C_BOLD=''
     C_DIM=''
 fi
 
@@ -76,21 +87,215 @@ log_info()    { internal_log INFO "$*"; }
 log_warn()    { internal_log WARN "$*"; }
 log_success() { internal_log OK "$*"; }
 
-clear_progress_line() {
-    if [[ -t 1 ]]; then
-        printf '\r\033[2K'
+format_duration() {
+    local total="${1:-0}"
+    local h m s
+    (( total < 0 )) && total=0
+    h=$(( total / 3600 ))
+    m=$(( (total % 3600) / 60 ))
+    s=$(( total % 60 ))
+    if (( h > 0 )); then
+        printf '%02d:%02d:%02d' "$h" "$m" "$s"
+    else
+        printf '%02d:%02d' "$m" "$s"
     fi
 }
 
+terminal_width() {
+    local cols=100
+    if [[ -t 1 ]] && command -v tput >/dev/null 2>&1; then
+        cols="$(tput cols 2>/dev/null || printf '100')"
+    fi
+    [[ "$cols" =~ ^[0-9]+$ ]] || cols=100
+    (( cols < 72 )) && cols=72
+    (( cols > 140 )) && cols=140
+    printf '%d' "$cols"
+}
+
+terminal_height() {
+    local rows=30
+    if [[ -t 1 ]] && command -v tput >/dev/null 2>&1; then
+        rows="$(tput lines 2>/dev/null || printf '30')"
+    fi
+    [[ "$rows" =~ ^[0-9]+$ ]] || rows=30
+    (( rows < 24 )) && rows=24
+    printf '%d' "$rows"
+}
+
+repeat_char() {
+    local char="$1" count="$2" out=""
+    printf -v out '%*s' "$count" ''
+    out="${out// /$char}"
+    printf '%s' "$out"
+}
+
+truncate_line() {
+    local text="$1" width="$2"
+    text="${text//$'\r'/}"
+    text="${text//$'\t'/ }"
+    if (( ${#text} > width )); then
+        printf '%s…' "${text:0:width-1}"
+    else
+        printf '%s' "$text"
+    fi
+}
+
+progress_percent() {
+    local stage_no="${CURRENT_STAGE_NUMBER:-0}"
+    local stage_pct="${STAGE_PROGRESS:-0}"
+    local value=0
+    if (( TOTAL_STAGES > 0 )); then
+        if (( stage_no <= 0 )); then
+            value=$(( COMPLETED_COUNT * 100 / TOTAL_STAGES ))
+        else
+            value=$(( ((stage_no - 1) * 100 + stage_pct) / TOTAL_STAGES ))
+        fi
+    fi
+    (( value < 0 )) && value=0
+    (( value > 100 )) && value=100
+    printf '%d' "$value"
+}
+
+make_progress_bar() {
+    local percent="$1" width="$2" filled empty left right
+    filled=$(( percent * width / 100 ))
+    empty=$(( width - filled ))
+    printf -v left '%*s' "$filled" ''
+    printf -v right '%*s' "$empty" ''
+    left="${left// /#}"
+    right="${right// /-}"
+    printf '%s%s' "$left" "$right"
+}
+
+ui_init() {
+    [[ -t 1 ]] || return 0
+    UI_ACTIVE=true
+    # Alternate screen + hide cursor. Restored on exit/error.
+    printf '\033[?1049h\033[?25l\033[2J\033[H'
+}
+
+ui_shutdown() {
+    [[ "$UI_ACTIVE" == true ]] || return 0
+    printf '\033[?25h\033[?1049l'
+    UI_ACTIVE=false
+}
+
+ui_log_source() {
+    if [[ -n "${ACTIVE_OUTPUT_FILE:-}" && -f "$ACTIVE_OUTPUT_FILE" ]]; then
+        printf '%s' "$ACTIVE_OUTPUT_FILE"
+    else
+        printf '%s' "${RUN_LOG:-}"
+    fi
+}
+
+ui_refresh() {
+    local status="${1:-RUNNING}"
+    local now elapsed stage_elapsed pct width rows inner bar_width bar source
+    local spinner frames='|/-\\' line i j marker1 marker2 text1 text2
+    local task_col task_text log_lines start_pad
+
+    now="$(date +%s)"
+    elapsed=$(( now - RUN_STARTED_AT ))
+    stage_elapsed=$(( now - STAGE_STARTED_AT ))
+    pct="$(progress_percent)"
+
+    if [[ ! -t 1 ]]; then
+        case "$status" in
+            READY|DONE|FAILED|COMPLETE)
+                printf '[%3d%%] %-9s %s\n' "$pct" "$status" "$CURRENT_STAGE_TITLE"
+                ;;
+        esac
+        return 0
+    fi
+
+    width="$(terminal_width)"
+    rows="$(terminal_height)"
+    inner=$(( width - 4 ))
+    bar_width=$(( width - 31 ))
+    (( bar_width < 20 )) && bar_width=20
+    bar="$(make_progress_bar "$pct" "$bar_width")"
+    spinner="${frames:SPINNER_INDEX%4:1}"
+    SPINNER_INDEX=$(( SPINNER_INDEX + 1 ))
+
+    # 5 task rows + dashboard chrome. Adapt logs to terminal height.
+    log_lines=$(( rows - 18 ))
+    (( log_lines < 5 )) && log_lines=5
+    (( log_lines > UI_LOG_LINES )) && log_lines="$UI_LOG_LINES"
+
+    printf '\033[H\033[2J'
+    printf '%b+%s+%b\n' "$C_CYAN" "$(repeat_char '-' "$((width-2))")" "$C_RESET"
+    printf '%b|%b %b%-*s%b %b|%b\n' "$C_CYAN" "$C_RESET" "$C_BOLD" "$((inner-1))" "Marzban Node Installer v${INSTALLER_VERSION}" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf '%b+%s+%b\n' "$C_CYAN" "$(repeat_char '-' "$((width-2))")" "$C_RESET"
+    printf '%b|%b Overall  %b[%s]%b %3d%%  %s  Elapsed %-8s %*s%b|%b\n' \
+        "$C_CYAN" "$C_RESET" "$C_MAGENTA" "$bar" "$C_RESET" "$pct" "$spinner" "$(format_duration "$elapsed")" \
+        1 '' "$C_CYAN" "$C_RESET"
+    printf '%b|%b Stage    %02d/%02d  %-*s%b|%b\n' "$C_CYAN" "$C_RESET" \
+        "${CURRENT_STAGE_NUMBER:-0}" "$TOTAL_STAGES" "$((inner-16))" "$(truncate_line "$CURRENT_STAGE_TITLE" "$((inner-16))")" "$C_CYAN" "$C_RESET"
+    printf '%b|%b Action   %-*s%b|%b\n' "$C_CYAN" "$C_RESET" "$((inner-9))" "$(truncate_line "$CURRENT_ACTION" "$((inner-9))")" "$C_CYAN" "$C_RESET"
+    printf '%b|%b Status   %-10s  Stage %-8s  %-*s%b|%b\n' "$C_CYAN" "$C_RESET" "$status" "$(format_duration "$stage_elapsed")" \
+        "$((inner-33))" "$(truncate_line "${PROGRESS_DETAIL:-}" "$((inner-33))")" "$C_CYAN" "$C_RESET"
+    printf '%b+%s+%b\n' "$C_CYAN" "$(repeat_char '-' "$((width-2))")" "$C_RESET"
+    printf '%b|%b %bTasks%b%-*s%b|%b\n' "$C_CYAN" "$C_RESET" "$C_BOLD" "$C_RESET" "$((inner-6))" '' "$C_CYAN" "$C_RESET"
+
+    task_col=$(( (inner - 3) / 2 ))
+    for (( i=0; i<5; i++ )); do
+        j=$(( i + 5 ))
+
+        if stage_is_marked "${STAGE_KEYS[$i]}" 2>/dev/null; then marker1="${C_GREEN}✓${C_RESET}"
+        elif (( i + 1 == CURRENT_STAGE_NUMBER )); then marker1="${C_YELLOW}▶${C_RESET}"
+        else marker1="${C_DIM}○${C_RESET}"; fi
+        text1="$(printf '%02d. %s' "$((i+1))" "${STAGE_TITLES[$i]}")"
+
+        if (( j < TOTAL_STAGES )); then
+            if stage_is_marked "${STAGE_KEYS[$j]}" 2>/dev/null; then marker2="${C_GREEN}✓${C_RESET}"
+            elif (( j + 1 == CURRENT_STAGE_NUMBER )); then marker2="${C_YELLOW}▶${C_RESET}"
+            else marker2="${C_DIM}○${C_RESET}"; fi
+            text2="$(printf '%02d. %s' "$((j+1))" "${STAGE_TITLES[$j]}")"
+        else
+            marker2=' '
+            text2=''
+        fi
+
+        printf '%b|%b %b %-*s | %b %-*s%b|%b\n' \
+            "$C_CYAN" "$C_RESET" "$marker1" "$((task_col-3))" "$(truncate_line "$text1" "$((task_col-3))")" \
+            "$marker2" "$((task_col-3))" "$(truncate_line "$text2" "$((task_col-3))")" "$C_CYAN" "$C_RESET"
+    done
+
+    printf '%b+%s+%b\n' "$C_CYAN" "$(repeat_char '-' "$((width-2))")" "$C_RESET"
+    printf '%b|%b %bLive log — latest output%b%-*s%b|%b\n' "$C_CYAN" "$C_RESET" "$C_BOLD" "$C_RESET" "$((inner-26))" '' "$C_CYAN" "$C_RESET"
+
+    source="$(ui_log_source)"
+    if [[ -n "$source" && -f "$source" ]]; then
+        mapfile -t __ui_lines < <(tail -n "$log_lines" "$source" 2>/dev/null || true)
+    else
+        __ui_lines=()
+    fi
+    start_pad=$(( log_lines - ${#__ui_lines[@]} ))
+    for (( i=0; i<start_pad; i++ )); do
+        printf '%b|%b %-*s %b|%b\n' "$C_CYAN" "$C_RESET" "$((inner-1))" '' "$C_CYAN" "$C_RESET"
+    done
+    for line in "${__ui_lines[@]:-}"; do
+        printf '%b|%b %-*s %b|%b\n' "$C_CYAN" "$C_RESET" "$((inner-1))" "$(truncate_line "$line" "$((inner-1))")" "$C_CYAN" "$C_RESET"
+    done
+
+    printf '%b+%s+%b' "$C_CYAN" "$(repeat_char '-' "$((width-2))")" "$C_RESET"
+}
+
+clear_progress_line() { :; }
+
 log_error() {
     internal_log ERROR "$*"
-    clear_progress_line
-    printf '%b[ERROR]%b %s\n' "$C_RED" "$C_RESET" "$*" >&2
+    if [[ -t 1 && "$UI_ACTIVE" == true ]]; then
+        ui_refresh "FAILED"
+    else
+        printf '%b[ERROR]%b %s\n' "$C_RED" "$C_RESET" "$*" >&2
+    fi
 }
 
 cleanup_files=()
 cleanup() {
     local f
+    ui_shutdown || true
     for f in "${cleanup_files[@]:-}"; do
         [[ -e "$f" ]] && rm -rf -- "$f" || true
     done
@@ -110,64 +315,35 @@ set_progress_detail() {
     PROGRESS_DETAIL="${1:-}"
 }
 
+set_stage_progress() {
+    local value="${1:-0}"
+    (( value < 0 )) && value=0
+    (( value > 100 )) && value=100
+    STAGE_PROGRESS="$value"
+    ui_refresh "RUNNING"
+}
+
 render_progress() {
-    local completed="${1:-0}"
-    local status="${2:-READY}"
+    local _completed="${1:-0}"
+    local status="${2:-RUNNING}"
     local label="${3:-$CURRENT_STAGE_TITLE}"
-    local width=34 percent=0 filled=0 empty=0
-    local fill_bar="" empty_bar="" spinner=""
-    local frames='|/-\\'
-
-    if (( TOTAL_STAGES > 0 )); then
-        percent=$(( completed * 100 / TOTAL_STAGES ))
-    fi
-    (( percent > 100 )) && percent=100
-
-    filled=$(( percent * width / 100 ))
-    empty=$(( width - filled ))
-    (( filled > 0 )) && printf -v fill_bar '%*s' "$filled" ''
-    (( empty > 0 )) && printf -v empty_bar '%*s' "$empty" ''
-    fill_bar="${fill_bar// /#}"
-    empty_bar="${empty_bar// /-}"
-
-    if [[ "$status" == "RUNNING" || "$status" == "WAITING" ]]; then
-        spinner="${frames:SPINNER_INDEX%4:1}"
-        SPINNER_INDEX=$(( SPINNER_INDEX + 1 ))
-    else
-        spinner=' '
-    fi
-
-    if [[ -n "$PROGRESS_DETAIL" ]]; then
-        label="$label - $PROGRESS_DETAIL"
-    fi
-
-    if [[ -t 1 ]]; then
-        printf '\r\033[2K%b[%s%s]%b %3d%% %s  %b%-8s%b  %s' \
-            "$C_MAGENTA" "$fill_bar" "$empty_bar" "$C_RESET" \
-            "$percent" "$spinner" "$C_DIM" "$status" "$C_RESET" "$label"
-    else
-        # When output is redirected, emit only meaningful milestone lines.
-        case "$status" in
-            READY|DONE|FAILED|COMPLETE)
-                printf '[%s%s] %3d%% %-8s %s\n' "$fill_bar" "$empty_bar" "$percent" "$status" "$label"
-                ;;
-        esac
-    fi
+    CURRENT_STAGE_TITLE="$label"
+    ui_refresh "$status"
 }
 
-finish_progress_line() {
-    if [[ -t 1 ]]; then
-        printf '\n'
-    fi
-    return 0
-}
+finish_progress_line() { return 0; }
 
 show_last_command_error() {
     local max_lines="${1:-24}"
     [[ -n "${LAST_COMMAND_LOG:-}" && -s "$LAST_COMMAND_LOG" ]] || return 0
-    printf '%b--- command error output (last %s lines) ---%b\n' "$C_RED" "$max_lines" "$C_RESET" >&2
-    tail -n "$max_lines" "$LAST_COMMAND_LOG" >&2 || true
-    printf '%b--------------------------------------------%b\n' "$C_RED" "$C_RESET" >&2
+    if [[ -t 1 && "$UI_ACTIVE" == true ]]; then
+        ACTIVE_OUTPUT_FILE="$LAST_COMMAND_LOG"
+        ui_refresh "FAILED"
+    else
+        printf '%b--- command error output (last %s lines) ---%b\n' "$C_RED" "$max_lines" "$C_RESET" >&2
+        tail -n "$max_lines" "$LAST_COMMAND_LOG" >&2 || true
+        printf '%b--------------------------------------------%b\n' "$C_RED" "$C_RESET" >&2
+    fi
 }
 
 save_last_error() {
@@ -244,16 +420,20 @@ run_cmd() {
     cmd_tmp="$(mktemp)"
     cleanup_files+=("$cmd_tmp")
     command_text="$(quote_command_string "$@")"
+    LAST_COMMAND_TEXT="$command_text"
+    CURRENT_ACTION="$command_text"
     internal_log CMD "$command_text"
+    ACTIVE_OUTPUT_FILE="$cmd_tmp"
 
+    # Command output is captured, while the dashboard tails it live.
     "$@" >"$cmd_tmp" 2>&1 &
     pid=$!
 
     while kill -0 "$pid" 2>/dev/null; do
-        if (( TOTAL_STAGES > 0 )); then
-            render_progress "$COMPLETED_COUNT" "RUNNING" "$CURRENT_STAGE_TITLE"
+        if [[ "$UI_ACTIVE" == true ]]; then
+            ui_refresh "RUNNING"
         fi
-        sleep 0.20
+        sleep 0.50
     done
 
     if wait "$pid"; then
@@ -263,20 +443,26 @@ run_cmd() {
     fi
 
     if [[ -n "${RUN_LOG:-}" ]]; then
-        cat "$cmd_tmp" >> "$RUN_LOG" 2>/dev/null || true
+        {
+            printf '\n[COMMAND] %s\n' "$command_text"
+            cat "$cmd_tmp"
+        } >> "$RUN_LOG" 2>/dev/null || true
     fi
 
     if (( rc == 0 )); then
+        ACTIVE_OUTPUT_FILE=""
         LAST_COMMAND_LOG=""
         LAST_COMMAND_TEXT=""
-        rm -f -- "$cmd_tmp"
         internal_log OK "Command completed: $command_text"
+        [[ "$UI_ACTIVE" == true ]] && ui_refresh "RUNNING"
+        rm -f -- "$cmd_tmp"
         return 0
     fi
 
     LAST_COMMAND_LOG="$cmd_tmp"
-    LAST_COMMAND_TEXT="$command_text"
+    ACTIVE_OUTPUT_FILE="$cmd_tmp"
     internal_log ERROR "Command failed (exit $rc): $command_text"
+    [[ "$UI_ACTIVE" == true ]] && ui_refresh "FAILED"
     return "$rc"
 }
 
@@ -306,7 +492,7 @@ Usage:
   bash $0 --help       Show this help
 
 Normal installation is quiet: subprocess output is written to an internal log.
-Only questions, the progress bar, and errors are shown on the terminal.
+Interactive questions are disabled. The terminal shows a live dashboard with progress, tasks and logs.
 EOF_USAGE
 }
 
@@ -470,26 +656,13 @@ load_saved_settings() {
 }
 
 load_or_ask_settings() {
-    if load_saved_settings; then
-        log_info "Resuming with saved installer choices. Use --restart to choose again."
-        return 0
-    fi
-
-    # Package operations are always noninteractive so they can run silently in
-    # the background without an invisible apt/dpkg prompt blocking the install.
+    # Fixed unattended policy requested by the operator.
+    # Never ask questions: Speedtest is enabled, UFW setup is disabled.
     AUTO_MODE=true
     SETUP_SECURITY=false
-    INSTALL_SPEEDTEST=false
-
-    if ask_yes_no "Apply UFW security configuration?"; then
-        SETUP_SECURITY=true
-    fi
-
-    if ask_yes_no "Install Ookla Speedtest CLI?"; then
-        INSTALL_SPEEDTEST=true
-    fi
-
+    INSTALL_SPEEDTEST=true
     save_settings
+    log_info "Automatic defaults: Speedtest=enabled, UFW setup=disabled, APT=noninteractive."
 }
 
 init_state_storage
@@ -582,7 +755,8 @@ wait_for_package_manager() {
         fi
 
         set_progress_detail "Waiting for APT lock (PID: ${last_holder_text}, ${elapsed}s)"
-        render_progress "$COMPLETED_COUNT" "WAITING" "$CURRENT_STAGE_TITLE"
+        CURRENT_ACTION="Waiting safely for apt/dpkg lock held by PID(s): ${last_holder_text}"
+        ui_refresh "WAITING"
         sleep "$APT_LOCK_POLL"
     done
 }
@@ -669,8 +843,11 @@ BASE_PACKAGES=(ca-certificates curl git wget unzip gnupg lsb-release)
 
 install_base_dependencies() {
     log_info "Installing required base packages..."
+    CURRENT_ACTION="Updating Ubuntu package index"; set_stage_progress 15
     apt_update
+    CURRENT_ACTION="Installing required base packages"; set_stage_progress 55
     apt_install "${BASE_PACKAGES[@]}"
+    set_stage_progress 88
 }
 
 verify_base_dependencies() {
@@ -693,18 +870,22 @@ install_docker() {
     log_warn "Docker/Compose not found or incomplete. Installing Docker..."
 
     local installer
+    CURRENT_ACTION="Downloading Docker installer"; set_stage_progress 18
     installer="$(mktemp)"
     cleanup_files+=("$installer")
     run_cmd curl -fsSL --retry 4 --retry-delay 2 --connect-timeout 15 --max-time 180 https://get.docker.com -o "$installer"
 
     # Docker's installer may call apt internally, so wait for unattended-upgrades first.
+    CURRENT_ACTION="Waiting for package manager before Docker"; set_stage_progress 35
     wait_for_package_manager
+    CURRENT_ACTION="Installing Docker Engine and Compose"; set_stage_progress 50
     if [[ "$AUTO_MODE" == true ]]; then
         run_cmd "${SUDO[@]}" env DEBIAN_FRONTEND=noninteractive sh "$installer"
     else
         run_cmd "${SUDO[@]}" sh "$installer"
     fi
 
+    CURRENT_ACTION="Enabling Docker service"; set_stage_progress 82
     run_cmd "${SUDO[@]}" systemctl enable --now docker
     verify_docker || fatal "Docker installation completed but Docker Compose is unavailable."
     log_success "Docker and Docker Compose are ready."
@@ -764,6 +945,7 @@ disable_security_if_present() {
 }
 
 apply_security_choice() {
+    CURRENT_ACTION="Applying firewall policy (UFW setup disabled)"; set_stage_progress 35
     if [[ "$SETUP_SECURITY" == true ]]; then
         configure_security
     else
@@ -791,6 +973,7 @@ speedtest_supported_by_policy() {
 }
 
 install_speedtest() {
+    CURRENT_ACTION="Checking Ookla Speedtest installation"; set_stage_progress 15
     if [[ "$INSTALL_SPEEDTEST" != true ]]; then
         log_info "Speedtest installation skipped by user choice."
         return 0
@@ -814,8 +997,10 @@ install_speedtest() {
         apt_remove speedtest-cli
     fi
 
+    CURRENT_ACTION="Installing Speedtest prerequisites"; set_stage_progress 30
     apt_install ca-certificates curl gnupg apt-transport-https
 
+    CURRENT_ACTION="Configuring official Ookla repository"; set_stage_progress 50
     local key_tmp
     key_tmp="$(mktemp)"
     cleanup_files+=("$key_tmp")
@@ -826,8 +1011,11 @@ install_speedtest() {
     printf '%s\n' 'deb [signed-by=/usr/share/keyrings/ookla-speedtest-archive-keyring.gpg] https://packagecloud.io/ookla/speedtest-cli/ubuntu/ jammy main' \
         | "${SUDO[@]}" tee /etc/apt/sources.list.d/ookla_speedtest-cli.list >/dev/null
 
+    CURRENT_ACTION="Refreshing package index for Ookla"; set_stage_progress 68
     apt_update
+    CURRENT_ACTION="Installing Ookla Speedtest CLI"; set_stage_progress 82
     apt_install speedtest
+    set_stage_progress 92
 
     command -v speedtest >/dev/null 2>&1 || fatal "Speedtest CLI installation failed."
     log_success "Ookla Speedtest CLI installed successfully."
@@ -843,6 +1031,7 @@ verify_speedtest() {
 # Stage 5 - Marzban Node repository
 # ==========================================
 prepare_marzban_repo() {
+    CURRENT_ACTION="Preparing Marzban Node source repository"; set_stage_progress 25
     if [[ -d "$MARZBAN_NODE_DIR/.git" ]]; then
         log_info "Marzban-node repository already exists. Updating it..."
         run_cmd git -C "$MARZBAN_NODE_DIR" fetch --prune origin
@@ -864,19 +1053,23 @@ verify_marzban_repo() {
 # ==========================================
 install_assets() {
     log_info "Installing/updating Xray assets..."
+    CURRENT_ACTION="Preparing Xray geo assets directory"; set_stage_progress 15
     run_cmd "${SUDO[@]}" mkdir -p "$ASSETS_DIR"
 
     download_atomic \
         "https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat" \
         "$ASSETS_DIR/geosite.dat"
+    CURRENT_ACTION="Downloading GeoIP database"; set_stage_progress 42
 
     download_atomic \
         "https://github.com/v2fly/geoip/releases/latest/download/geoip.dat" \
         "$ASSETS_DIR/geoip.dat"
+    CURRENT_ACTION="Downloading Iran routing database"; set_stage_progress 68
 
     download_atomic \
         "https://github.com/bootmortis/iran-hosted-domains/releases/latest/download/iran.dat" \
         "$ASSETS_DIR/iran.dat"
+    set_stage_progress 90
 
     log_success "Xray assets are ready."
 }
@@ -892,8 +1085,10 @@ verify_assets() {
 # ==========================================
 install_client_certificate() {
     log_info "Installing SSL client certificate..."
+    CURRENT_ACTION="Downloading Marzban Node client certificate"; set_stage_progress 30
     run_cmd "${SUDO[@]}" mkdir -p "$MARZBAN_NODE_DATA_DIR"
     download_atomic "$CLIENT_CERT_URL" "$CLIENT_CERT_FILE" 0644
+    CURRENT_ACTION="Validating client certificate"; set_stage_progress 78
 
     "${SUDO[@]}" grep -q -- 'BEGIN CERTIFICATE' "$CLIENT_CERT_FILE" || \
         fatal "Downloaded SSL client certificate does not look like a PEM certificate."
@@ -926,6 +1121,7 @@ install_xray_core() {
     fi
 
     log_info "Installing Xray-core v$XRAY_VERSION for $(uname -m)..."
+    CURRENT_ACTION="Downloading Xray-core v$XRAY_VERSION"; set_stage_progress 20
 
     local zip_tmp extract_dir
     zip_tmp="$(mktemp --suffix=.zip)"
@@ -936,10 +1132,12 @@ install_xray_core() {
         -o "$zip_tmp" \
         "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/${XRAY_ARCHIVE}"
 
+    CURRENT_ACTION="Extracting Xray-core"; set_stage_progress 58
     run_cmd unzip -q -o "$zip_tmp" xray -d "$extract_dir"
     [[ -s "$extract_dir/xray" ]] || fatal "Xray archive did not contain a valid xray executable."
 
     run_cmd "${SUDO[@]}" mkdir -p "$XRAY_DIR"
+    CURRENT_ACTION="Installing Xray-core executable"; set_stage_progress 78
     run_cmd "${SUDO[@]}" install -m 0755 "$extract_dir/xray" "$xray_bin"
 
     local installed_version
@@ -959,6 +1157,7 @@ verify_xray_core() {
 # Stage 9 - Docker Compose
 # ==========================================
 generate_compose() {
+    CURRENT_ACTION="Generating Docker Compose configuration"; set_stage_progress 25
     local compose_file="$MARZBAN_NODE_DIR/docker-compose.yml"
     local tmp
 
@@ -987,6 +1186,7 @@ services:
 YAML
 
     # Validate the generated file before replacing the active compose file.
+    CURRENT_ACTION="Validating generated Compose configuration"; set_stage_progress 60
     run_cmd "${SUDO[@]}" docker compose -f "$tmp" config -q
 
     if [[ -f "$compose_file" ]] && ! cmp -s "$tmp" "$compose_file"; then
@@ -1011,11 +1211,14 @@ start_marzban_node() {
     local compose_file="$MARZBAN_NODE_DIR/docker-compose.yml"
 
     log_info "Pulling the latest Marzban Node image..."
+    CURRENT_ACTION="Pulling latest Marzban Node image"; set_stage_progress 18
     run_cmd "${SUDO[@]}" docker compose -f "$compose_file" pull
 
     log_info "Starting Marzban Node..."
+    CURRENT_ACTION="Starting Marzban Node container"; set_stage_progress 58
     run_cmd "${SUDO[@]}" docker compose -f "$compose_file" up -d --remove-orphans
 
+    CURRENT_ACTION="Waiting for Marzban Node health"; set_stage_progress 82
     local attempt
     for attempt in 1 2 3 4 5 6 7 8 9 10; do
         if verify_marzban_node_running; then
@@ -1171,15 +1374,23 @@ run_stage() {
     CURRENT_STAGE_KEY="$key"
     CURRENT_STAGE_TITLE="$title"
     CURRENT_STAGE_NUMBER=$(( index + 1 ))
+    STAGE_STARTED_AT="$(date +%s)"
+    STAGE_PROGRESS=10
+    CURRENT_ACTION="Starting: $title"
     set_progress_detail "Step ${CURRENT_STAGE_NUMBER}/${TOTAL_STAGES}"
 
     if stage_is_marked "$key"; then
-        render_progress "$COMPLETED_COUNT" "DONE" "$title"
+        STAGE_PROGRESS=100
+        CURRENT_ACTION="Already completed and verified"
+        ui_refresh "DONE"
         return 0
     fi
 
-    render_progress "$COMPLETED_COUNT" "RUNNING" "$title"
+    ui_refresh "RUNNING"
     "$runner"
+    STAGE_PROGRESS=90
+    CURRENT_ACTION="Verifying: $title"
+    ui_refresh "VERIFYING"
 
     if ! "$verifier"; then
         fatal "Post-step verification failed: $title"
@@ -1188,19 +1399,22 @@ run_stage() {
     mark_stage_done "$key"
     COMPLETED_COUNT=$(( COMPLETED_COUNT + 1 ))
     "${SUDO[@]}" rm -f -- "$LAST_ERROR_FILE" >/dev/null 2>&1 || true
-    set_progress_detail "Step ${CURRENT_STAGE_NUMBER}/${TOTAL_STAGES}"
-    render_progress "$COMPLETED_COUNT" "DONE" "$title"
+    STAGE_PROGRESS=100
+    CURRENT_ACTION="Completed: $title"
+    ui_refresh "DONE"
 }
+
 # ==========================================
 # Final report
 # ==========================================
 show_summary() {
-    CURRENT_STAGE_TITLE="Marzban Node installation"
-    set_progress_detail ""
-    render_progress "$TOTAL_STAGES" "COMPLETE" "$CURRENT_STAGE_TITLE"
-    finish_progress_line
-    clear_progress_line
-    printf '%bInstallation completed successfully.%b\n' "$C_GREEN" "$C_RESET"
+    CURRENT_STAGE_KEY="summary"
+    CURRENT_STAGE_TITLE="Installation complete"
+    CURRENT_STAGE_NUMBER="$TOTAL_STAGES"
+    STAGE_PROGRESS=100
+    CURRENT_ACTION="Marzban Node is installed and running"
+    set_progress_detail "All ${TOTAL_STAGES} steps completed"
+    ui_refresh "COMPLETE"
     internal_log OK "Marzban Node installation completed successfully."
 
     local ip=""
@@ -1212,7 +1426,18 @@ show_summary() {
     else
         internal_log WARN "Node ssl_cert.pem has not been generated yet."
     fi
+
+    if [[ -t 1 ]]; then
+        ui_refresh "COMPLETE"
+        printf '\n'
+        sleep 1
+        ui_shutdown
+    fi
+    printf 'Installation completed successfully.\n'
+    [[ -n "$ip" ]] && printf 'Public IPv4: %s\n' "$ip"
+    printf 'Log file: %s\n' "$RUN_LOG"
 }
+
 # ==========================================
 # Main
 # ==========================================
@@ -1220,11 +1445,9 @@ main() {
     log_info "APT lock policy: wait up to ${APT_LOCK_TIMEOUT}s; never delete dpkg/apt lock files."
 
     if [[ "$STATUS_ONLY" == true ]]; then
-        if ! load_saved_settings; then
-            AUTO_MODE=true
-            SETUP_SECURITY=false
-            INSTALL_SPEEDTEST=false
-        fi
+        AUTO_MODE=true
+        SETUP_SECURITY=false
+        INSTALL_SPEEDTEST=true
         configure_apt_mode
         show_status
         return 0
@@ -1235,18 +1458,21 @@ main() {
 
     reconcile_checkpoints
     COMPLETED_COUNT="$(count_completed_stages)"
-
-    render_progress "$COMPLETED_COUNT" "READY" "Installer progress"
+    CURRENT_STAGE_NUMBER=$(( COMPLETED_COUNT + 1 ))
+    (( CURRENT_STAGE_NUMBER > TOTAL_STAGES )) && CURRENT_STAGE_NUMBER="$TOTAL_STAGES"
+    STAGE_PROGRESS=10
+    CURRENT_STAGE_TITLE="Preparing installation"
+    CURRENT_ACTION="Automatic mode: Speedtest=ON, UFW=OFF"
+    set_progress_detail "No interactive questions"
+    ui_init
+    ui_refresh "READY"
 
     local i
     for (( i=0; i<TOTAL_STAGES; i++ )); do
         run_stage "$i"
     done
 
-    CURRENT_STAGE_KEY="summary"
-    CURRENT_STAGE_TITLE="Final report"
-    CURRENT_STAGE_NUMBER="$TOTAL_STAGES"
     show_summary
 }
 
-main
+main "$@"

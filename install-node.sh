@@ -6,7 +6,7 @@ IFS=$'\n\t'
 # Marzban Node Installer - Resumable Edition
 # ==========================================
 
-readonly INSTALLER_VERSION="2.2.0"
+readonly INSTALLER_VERSION="2.2.1"
 readonly XRAY_VERSION="${XRAY_VERSION:-26.3.27}"
 readonly TRUSTED_IP="${TRUSTED_IP:-91.107.178.21}"
 readonly MARZBAN_NODE_DIR="${MARZBAN_NODE_DIR:-${HOME}/Marzban-node}"
@@ -222,7 +222,10 @@ ui_refresh() {
     (( log_lines < 5 )) && log_lines=5
     (( log_lines > UI_LOG_LINES )) && log_lines="$UI_LOG_LINES"
 
-    printf '\033[H\033[2J'
+    # Flicker-free refresh: move the cursor to the top-left and overwrite the
+    # existing dashboard in place. Do NOT clear the whole screen here; a full
+    # ESC[2J on every refresh causes the terminal to flash black.
+    printf '\033[H'
     printf '%b+%s+%b\n' "$C_CYAN" "$(repeat_char '-' "$((width-2))")" "$C_RESET"
     printf '%b|%b %b%-*s%b %b|%b\n' "$C_CYAN" "$C_RESET" "$C_BOLD" "$((inner-1))" "Marzban Node Installer v${INSTALLER_VERSION}" "$C_RESET" "$C_CYAN" "$C_RESET"
     printf '%b+%s+%b\n' "$C_CYAN" "$(repeat_char '-' "$((width-2))")" "$C_RESET"

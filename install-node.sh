@@ -6,12 +6,12 @@ IFS=$'\n\t'
 # Marzban Node Installer - Resumable Edition
 # ==========================================
 
-readonly INSTALLER_VERSION="2.0.0"
+readonly INSTALLER_VERSION="2.1.0"
 readonly XRAY_VERSION="${XRAY_VERSION:-26.3.27}"
 readonly TRUSTED_IP="${TRUSTED_IP:-91.107.178.21}"
 readonly MARZBAN_NODE_DIR="${MARZBAN_NODE_DIR:-${HOME}/Marzban-node}"
-readonly MARZBAN_DATA_DIR="/var/lib/marzban"
-readonly MARZBAN_NODE_DATA_DIR="/var/lib/marzban-node"
+readonly MARZBAN_DATA_DIR="${MARZBAN_DATA_DIR:-/var/lib/marzban}"
+readonly MARZBAN_NODE_DATA_DIR="${MARZBAN_NODE_DATA_DIR:-/var/lib/marzban-node}"
 readonly XRAY_DIR="${MARZBAN_DATA_DIR}/xray-core"
 readonly ASSETS_DIR="${MARZBAN_DATA_DIR}/assets"
 readonly CLIENT_CERT_URL="https://github.com/KAJOOSH/node/raw/refs/heads/main/certificate/ssl_client_cert.pem"
@@ -21,7 +21,9 @@ readonly STATE_DIR="${INSTALLER_STATE_DIR:-/var/lib/marzban-node-installer}"
 readonly STATE_FILE="${STATE_DIR}/completed.stages"
 readonly SETTINGS_FILE="${STATE_DIR}/settings.conf"
 readonly LAST_ERROR_FILE="${STATE_DIR}/last-error.txt"
-readonly RUN_LOCK_FILE="/run/lock/marzban-node-installer.lock"
+readonly RUN_LOCK_FILE="${INSTALLER_RUN_LOCK_FILE:-/run/lock/marzban-node-installer.lock}"
+readonly OS_RELEASE_FILE="${INSTALLER_OS_RELEASE_FILE:-/etc/os-release}"
+readonly LOG_DIR="${STATE_DIR}/logs"
 
 readonly APT_LOCK_TIMEOUT="${APT_LOCK_TIMEOUT:-1800}"
 readonly APT_LOCK_POLL="${APT_LOCK_POLL:-3}"
@@ -35,17 +37,21 @@ COMPLETED_COUNT=0
 STATE_READY=false
 ERROR_REPORTED=false
 RESTART_REQUESTED=false
+RUN_LOG=""
+LAST_COMMAND_LOG=""
+LAST_COMMAND_TEXT=""
+PROGRESS_DETAIL=""
+SPINNER_INDEX=0
 STATUS_ONLY=false
 
 # ==========================================
-# Colors and logging
+# Colors, quiet logging and progress UI
 # ==========================================
 if [[ -t 1 ]]; then
     C_RESET='\033[0m'
     C_RED='\033[0;31m'
     C_GREEN='\033[0;32m'
     C_YELLOW='\033[0;33m'
-    C_BLUE='\033[0;34m'
     C_CYAN='\033[0;36m'
     C_MAGENTA='\033[0;35m'
     C_DIM='\033[2m'
@@ -54,16 +60,33 @@ else
     C_RED=''
     C_GREEN=''
     C_YELLOW=''
-    C_BLUE=''
     C_CYAN=''
     C_MAGENTA=''
     C_DIM=''
 fi
 
-log_info()    { printf '%b[INFO]%b %s - %s\n' "$C_BLUE" "$C_RESET" "$(date '+%H:%M:%S')" "$*"; }
-log_warn()    { printf '%b[WARN]%b %s - %s\n' "$C_YELLOW" "$C_RESET" "$(date '+%H:%M:%S')" "$*"; }
-log_error()   { printf '%b[ERROR]%b %s - %s\n' "$C_RED" "$C_RESET" "$(date '+%H:%M:%S')" "$*" >&2; }
-log_success() { printf '%b[OK]%b %s - %s\n' "$C_GREEN" "$C_RESET" "$(date '+%H:%M:%S')" "$*"; }
+internal_log() {
+    local level="$1"
+    shift
+    [[ -n "${RUN_LOG:-}" ]] || return 0
+    printf '[%s] %s - %s\n' "$level" "$(date '+%H:%M:%S')" "$*" >> "$RUN_LOG" 2>/dev/null || true
+}
+
+log_info()    { internal_log INFO "$*"; }
+log_warn()    { internal_log WARN "$*"; }
+log_success() { internal_log OK "$*"; }
+
+clear_progress_line() {
+    if [[ -t 1 ]]; then
+        printf '\r\033[2K'
+    fi
+}
+
+log_error() {
+    internal_log ERROR "$*"
+    clear_progress_line
+    printf '%b[ERROR]%b %s\n' "$C_RED" "$C_RESET" "$*" >&2
+}
 
 cleanup_files=()
 cleanup() {
@@ -74,25 +97,26 @@ cleanup() {
 }
 trap cleanup EXIT
 
-quote_cmd() {
-    local arg
-    printf '%b' "$C_CYAN"
+quote_command_string() {
+    local arg out=""
     for arg in "$@"; do
-        printf '%q ' "$arg"
+        printf -v arg '%q' "$arg"
+        out+="${arg} "
     done
-    printf '%b\n' "$C_RESET"
+    printf '%s' "${out% }"
+}
+
+set_progress_detail() {
+    PROGRESS_DETAIL="${1:-}"
 }
 
 render_progress() {
     local completed="${1:-0}"
     local status="${2:-READY}"
     local label="${3:-$CURRENT_STAGE_TITLE}"
-    local width=34
-    local percent=0
-    local filled=0
-    local empty=0
-    local fill_bar=""
-    local empty_bar=""
+    local width=34 percent=0 filled=0 empty=0
+    local fill_bar="" empty_bar="" spinner=""
+    local frames='|/-\\'
 
     if (( TOTAL_STAGES > 0 )); then
         percent=$(( completed * 100 / TOTAL_STAGES ))
@@ -106,9 +130,44 @@ render_progress() {
     fill_bar="${fill_bar// /#}"
     empty_bar="${empty_bar// /-}"
 
-    printf '%b[%s%s]%b %3d%%  %b%-8s%b  %s\n' \
-        "$C_MAGENTA" "$fill_bar" "$empty_bar" "$C_RESET" \
-        "$percent" "$C_DIM" "$status" "$C_RESET" "$label"
+    if [[ "$status" == "RUNNING" || "$status" == "WAITING" ]]; then
+        spinner="${frames:SPINNER_INDEX%4:1}"
+        SPINNER_INDEX=$(( SPINNER_INDEX + 1 ))
+    else
+        spinner=' '
+    fi
+
+    if [[ -n "$PROGRESS_DETAIL" ]]; then
+        label="$label - $PROGRESS_DETAIL"
+    fi
+
+    if [[ -t 1 ]]; then
+        printf '\r\033[2K%b[%s%s]%b %3d%% %s  %b%-8s%b  %s' \
+            "$C_MAGENTA" "$fill_bar" "$empty_bar" "$C_RESET" \
+            "$percent" "$spinner" "$C_DIM" "$status" "$C_RESET" "$label"
+    else
+        # When output is redirected, emit only meaningful milestone lines.
+        case "$status" in
+            READY|DONE|FAILED|COMPLETE)
+                printf '[%s%s] %3d%% %-8s %s\n' "$fill_bar" "$empty_bar" "$percent" "$status" "$label"
+                ;;
+        esac
+    fi
+}
+
+finish_progress_line() {
+    if [[ -t 1 ]]; then
+        printf '\n'
+    fi
+    return 0
+}
+
+show_last_command_error() {
+    local max_lines="${1:-24}"
+    [[ -n "${LAST_COMMAND_LOG:-}" && -s "$LAST_COMMAND_LOG" ]] || return 0
+    printf '%b--- command error output (last %s lines) ---%b\n' "$C_RED" "$max_lines" "$C_RESET" >&2
+    tail -n "$max_lines" "$LAST_COMMAND_LOG" >&2 || true
+    printf '%b--------------------------------------------%b\n' "$C_RED" "$C_RESET" >&2
 }
 
 save_last_error() {
@@ -124,24 +183,33 @@ save_last_error() {
         printf 'stage=%s\n' "${CURRENT_STAGE_KEY:-preflight}"
         printf 'stage_title=%s\n' "$CURRENT_STAGE_TITLE"
         printf 'message=%s\n' "$message"
+        [[ -n "${RUN_LOG:-}" ]] && printf 'run_log=%s\n' "$RUN_LOG"
+        if [[ -n "${LAST_COMMAND_LOG:-}" && -s "$LAST_COMMAND_LOG" ]]; then
+            printf '\ncommand_output_tail:\n'
+            tail -n 40 "$LAST_COMMAND_LOG" || true
+        fi
     } > "$tmp"
     "${SUDO[@]}" install -m 0644 "$tmp" "$LAST_ERROR_FILE" >/dev/null 2>&1 || true
 }
 
 resume_hint() {
-    if [[ "$STATE_READY" == true ]]; then
-        log_info "Completed stages are saved in: $STATE_FILE"
-        log_info "Run the same installer command again; it will resume from the first incomplete stage."
-    fi
+    [[ "$STATE_READY" == true ]] || return 0
+    local script_path
+    script_path="$(readlink -f "$0" 2>/dev/null || printf '%s' "$0")"
+    printf '%bResume:%b bash %q\n' "$C_YELLOW" "$C_RESET" "$script_path" >&2
+    [[ -n "${RUN_LOG:-}" ]] && printf '%bFull log:%b %s\n' "$C_YELLOW" "$C_RESET" "$RUN_LOG" >&2
 }
 
 fatal() {
     local message="$*"
     save_last_error "$message"
-    log_error "$message"
+    set_progress_detail ""
     if (( TOTAL_STAGES > 0 )); then
         render_progress "$COMPLETED_COUNT" "FAILED" "$CURRENT_STAGE_TITLE"
+        finish_progress_line
     fi
+    log_error "$message"
+    show_last_command_error
     resume_hint
     exit 1
 }
@@ -156,43 +224,73 @@ on_error() {
     trap - ERR
     set +e
 
-    local message="Unexpected error (exit $rc) at line $line while running: $command"
+    local failed_command="${LAST_COMMAND_TEXT:-$command}"
+    local message="Stage ${CURRENT_STAGE_NUMBER:-0}/${TOTAL_STAGES:-0} failed (exit $rc): $failed_command"
     save_last_error "$message"
-    log_error "Stage ${CURRENT_STAGE_NUMBER:-0}/${TOTAL_STAGES:-0} failed: $CURRENT_STAGE_TITLE"
-    log_error "$message"
+    set_progress_detail ""
     if (( TOTAL_STAGES > 0 )); then
         render_progress "$COMPLETED_COUNT" "FAILED" "$CURRENT_STAGE_TITLE"
+        finish_progress_line
     fi
+    log_error "$message"
+    show_last_command_error
     resume_hint
     exit "$rc"
 }
 trap 'on_error "$?" "$LINENO" "$BASH_COMMAND"' ERR
 
 run_cmd() {
-    local rc
-    log_info "Running command:"
-    quote_cmd "$@"
+    local rc pid cmd_tmp command_text
+    cmd_tmp="$(mktemp)"
+    cleanup_files+=("$cmd_tmp")
+    command_text="$(quote_command_string "$@")"
+    internal_log CMD "$command_text"
 
-    if "$@"; then
-        log_success "Command completed."
-        return 0
+    "$@" >"$cmd_tmp" 2>&1 &
+    pid=$!
+
+    while kill -0 "$pid" 2>/dev/null; do
+        if (( TOTAL_STAGES > 0 )); then
+            render_progress "$COMPLETED_COUNT" "RUNNING" "$CURRENT_STAGE_TITLE"
+        fi
+        sleep 0.20
+    done
+
+    if wait "$pid"; then
+        rc=0
     else
         rc=$?
-        log_error "Command failed with exit code $rc."
-        return "$rc"
     fi
+
+    if [[ -n "${RUN_LOG:-}" ]]; then
+        cat "$cmd_tmp" >> "$RUN_LOG" 2>/dev/null || true
+    fi
+
+    if (( rc == 0 )); then
+        LAST_COMMAND_LOG=""
+        LAST_COMMAND_TEXT=""
+        rm -f -- "$cmd_tmp"
+        internal_log OK "Command completed: $command_text"
+        return 0
+    fi
+
+    LAST_COMMAND_LOG="$cmd_tmp"
+    LAST_COMMAND_TEXT="$command_text"
+    internal_log ERROR "Command failed (exit $rc): $command_text"
+    return "$rc"
 }
 
 ask_yes_no() {
     local prompt="$1"
     local answer
     while true; do
+        clear_progress_line
         printf '%b%s (y/n): %b' "$C_YELLOW" "$prompt" "$C_RESET"
         read -r answer
         case "$answer" in
             [Yy]) return 0 ;;
             [Nn]) return 1 ;;
-            *) log_warn "Please enter y or n." ;;
+            *) printf '%bPlease enter y or n.%b\n' "$C_RED" "$C_RESET" ;;
         esac
     done
 }
@@ -202,16 +300,13 @@ usage() {
 Marzban Node Installer v${INSTALLER_VERSION}
 
 Usage:
-  $0              Resume normally (default)
-  $0 --restart    Clear installer checkpoints/settings and start the workflow again
-  $0 --status     Show saved stage status and exit
-  $0 --help       Show this help
+  bash $0              Resume normally (default)
+  bash $0 --restart    Clear installer checkpoints/settings and start workflow again
+  bash $0 --status     Show saved stage status and exit
+  bash $0 --help       Show this help
 
-Environment overrides:
-  APT_LOCK_TIMEOUT=1800   Maximum seconds to wait for apt/dpkg locks
-  APT_LOCK_POLL=3         Lock polling interval in seconds
-  APT_RETRIES=3           Number of apt command attempts
-  XRAY_VERSION=26.3.27    Xray-core version
+Normal installation is quiet: subprocess output is written to an internal log.
+Only questions, the progress bar, and errors are shown on the terminal.
 EOF_USAGE
 }
 
@@ -265,9 +360,9 @@ fi
 # ==========================================
 # OS checks
 # ==========================================
-[[ -r /etc/os-release ]] || fatal "/etc/os-release not found. Unsupported operating system."
+[[ -r "$OS_RELEASE_FILE" ]] || fatal "$OS_RELEASE_FILE not found. Unsupported operating system."
 # shellcheck disable=SC1091
-source /etc/os-release
+source "$OS_RELEASE_FILE"
 [[ "${ID:-}" == "ubuntu" ]] || fatal "This installer currently supports Ubuntu only. Detected: ${PRETTY_NAME:-unknown}."
 
 case "$(uname -m)" in
@@ -290,11 +385,15 @@ esac
 # Persistent state / resume support
 # ==========================================
 init_state_storage() {
-    run_cmd "${SUDO[@]}" mkdir -p "$STATE_DIR"
-    run_cmd "${SUDO[@]}" touch "$STATE_FILE"
-    run_cmd "${SUDO[@]}" chmod 0755 "$STATE_DIR"
-    run_cmd "${SUDO[@]}" chmod 0644 "$STATE_FILE"
+    "${SUDO[@]}" mkdir -p "$STATE_DIR" "$LOG_DIR" >/dev/null 2>&1
+    "${SUDO[@]}" touch "$STATE_FILE" >/dev/null 2>&1
+    "${SUDO[@]}" chmod 0755 "$STATE_DIR" "$LOG_DIR" >/dev/null 2>&1
+    "${SUDO[@]}" chmod 0644 "$STATE_FILE" >/dev/null 2>&1
+    RUN_LOG="$LOG_DIR/run-$(date '+%Y%m%d-%H%M%S')-$$.log"
+    "${SUDO[@]}" touch "$RUN_LOG" >/dev/null 2>&1
+    "${SUDO[@]}" chmod 0600 "$RUN_LOG" >/dev/null 2>&1
     STATE_READY=true
+    internal_log INFO "Marzban Node Installer v$INSTALLER_VERSION"
 }
 
 clear_installer_state() {
@@ -357,14 +456,14 @@ read_saved_bool() {
 load_saved_settings() {
     [[ -r "$SETTINGS_FILE" ]] || return 1
 
-    local saved_auto saved_security saved_speedtest
-    saved_auto="$(read_saved_bool AUTO_MODE || true)"
+    local saved_security saved_speedtest
     saved_security="$(read_saved_bool SETUP_SECURITY || true)"
     saved_speedtest="$(read_saved_bool INSTALL_SPEEDTEST || true)"
 
-    [[ -n "$saved_auto" && -n "$saved_security" && -n "$saved_speedtest" ]] || return 1
+    [[ -n "$saved_security" && -n "$saved_speedtest" ]] || return 1
 
-    AUTO_MODE="$saved_auto"
+    # Quiet/background execution must never stop on a hidden package prompt.
+    AUTO_MODE=true
     SETUP_SECURITY="$saved_security"
     INSTALL_SPEEDTEST="$saved_speedtest"
     return 0
@@ -376,16 +475,11 @@ load_or_ask_settings() {
         return 0
     fi
 
-    AUTO_MODE=false
+    # Package operations are always noninteractive so they can run silently in
+    # the background without an invisible apt/dpkg prompt blocking the install.
+    AUTO_MODE=true
     SETUP_SECURITY=false
     INSTALL_SPEEDTEST=false
-
-    if ask_yes_no "Use fully noninteractive mode and automatically accept package-manager defaults?"; then
-        AUTO_MODE=true
-        log_info "Fully noninteractive APT mode enabled."
-    else
-        log_info "Interactive APT mode enabled."
-    fi
 
     if ask_yes_no "Apply UFW security configuration?"; then
         SETUP_SECURITY=true
@@ -465,51 +559,40 @@ show_lock_holder_details() {
 }
 
 wait_for_package_manager() {
-    local start now elapsed holders last_notice=-999
+    local start now elapsed holders last_holder_text=""
     start="$(date +%s)"
 
     while true; do
         holders="$(get_package_manager_lock_holders)"
         if [[ -z "$holders" ]]; then
-            if (( last_notice >= 0 )); then
-                [[ -t 1 ]] && printf '\n'
-                log_success "APT/dpkg lock is free; continuing."
-            fi
+            set_progress_detail ""
             return 0
         fi
 
         now="$(date +%s)"
         elapsed=$(( now - start ))
+        last_holder_text="$(printf '%s' "$holders" | tr '\n' ',' | sed 's/,$//')"
 
         if (( elapsed >= APT_LOCK_TIMEOUT )); then
-            [[ -t 1 ]] && printf '\n'
-            log_error "Timed out after ${APT_LOCK_TIMEOUT}s waiting for apt/dpkg. The lock was NOT removed or forced."
-            log_error "Current package-manager process(es):"
-            show_lock_holder_details "$holders"
+            set_progress_detail ""
+            internal_log ERROR "Timed out waiting for apt/dpkg lock. PID(s): $last_holder_text"
+            show_lock_holder_details "$holders" >> "${RUN_LOG:-/dev/null}" 2>&1 || true
+            LAST_COMMAND_LOG="${RUN_LOG:-}"
             return 1
         fi
 
-        if [[ -t 1 ]]; then
-            printf '\r%b[WAIT]%b apt/dpkg is busy (PID: %s) - %ds/%ds' \
-                "$C_YELLOW" "$C_RESET" "$(printf '%s' "$holders" | tr '\n' ',' | sed 's/,$//')" \
-                "$elapsed" "$APT_LOCK_TIMEOUT"
-            last_notice=$elapsed
-        elif (( elapsed - last_notice >= 15 )); then
-            log_warn "apt/dpkg is busy; waiting safely (${elapsed}s/${APT_LOCK_TIMEOUT}s). PID(s): $(printf '%s' "$holders" | tr '\n' ' ')"
-            last_notice=$elapsed
-        fi
-
+        set_progress_detail "Waiting for APT lock (PID: ${last_holder_text}, ${elapsed}s)"
+        render_progress "$COMPLETED_COUNT" "WAITING" "$CURRENT_STAGE_TITLE"
         sleep "$APT_LOCK_POLL"
     done
 }
-
 repair_dpkg_if_needed() {
     local audit
     audit="$("${SUDO[@]}" dpkg --audit 2>&1 || true)"
     [[ -n "$audit" ]] || return 0
 
-    log_warn "dpkg reports unfinished package configuration; attempting a safe 'dpkg --configure -a'."
-    printf '%s\n' "$audit"
+    log_warn "dpkg reports unfinished package configuration; attempting a safe dpkg --configure -a."
+    [[ -n "${RUN_LOG:-}" ]] && printf '%s\n' "$audit" >> "$RUN_LOG"
 
     wait_for_package_manager || return 1
     if [[ "$AUTO_MODE" == true ]]; then
@@ -544,7 +627,7 @@ apt_exec() {
         fi
     done
 
-    log_error "APT command failed after ${APT_RETRIES} attempt(s)."
+    internal_log ERROR "APT command failed after ${APT_RETRIES} attempt(s)."
     return "$rc"
 }
 
@@ -572,7 +655,7 @@ download_atomic() {
     tmp="$(mktemp)"
     cleanup_files+=("$tmp")
 
-    run_cmd curl -fL --retry 4 --retry-delay 2 --connect-timeout 15 --max-time 180 -o "$tmp" "$url"
+    run_cmd curl -fsSL --retry 4 --retry-delay 2 --connect-timeout 15 --max-time 180 -o "$tmp" "$url"
     [[ -s "$tmp" ]] || fatal "Downloaded file is empty: $url"
 
     run_cmd "${SUDO[@]}" install -m "$mode" "$tmp" "$destination"
@@ -849,7 +932,7 @@ install_xray_core() {
     extract_dir="$(mktemp -d)"
     cleanup_files+=("$zip_tmp" "$extract_dir")
 
-    run_cmd curl -fL --retry 4 --retry-delay 2 --connect-timeout 15 --max-time 300 \
+    run_cmd curl -fsSL --retry 4 --retry-delay 2 --connect-timeout 15 --max-time 300 \
         -o "$zip_tmp" \
         "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/${XRAY_ARCHIVE}"
 
@@ -942,8 +1025,12 @@ start_marzban_node() {
         sleep 2
     done
 
-    log_error "Marzban Node did not reach running state. Recent logs:"
-    "${SUDO[@]}" docker compose -f "$compose_file" logs --tail=80 marzban-node || true
+    local node_log_tmp
+    node_log_tmp="$(mktemp)"
+    cleanup_files+=("$node_log_tmp")
+    "${SUDO[@]}" docker compose -f "$compose_file" logs --tail=80 marzban-node >"$node_log_tmp" 2>&1 || true
+    [[ -n "${RUN_LOG:-}" ]] && cat "$node_log_tmp" >> "$RUN_LOG" 2>/dev/null || true
+    LAST_COMMAND_LOG="$node_log_tmp"
     fatal "Marzban Node failed to start correctly."
 }
 
@@ -1084,12 +1171,9 @@ run_stage() {
     CURRENT_STAGE_KEY="$key"
     CURRENT_STAGE_TITLE="$title"
     CURRENT_STAGE_NUMBER=$(( index + 1 ))
-
-    printf '\n%b===== Step %02d/%02d: %s =====%b\n' \
-        "$C_CYAN" "$CURRENT_STAGE_NUMBER" "$TOTAL_STAGES" "$title" "$C_RESET"
+    set_progress_detail "Step ${CURRENT_STAGE_NUMBER}/${TOTAL_STAGES}"
 
     if stage_is_marked "$key"; then
-        log_success "Checkpoint verified; this step is already complete."
         render_progress "$COMPLETED_COUNT" "DONE" "$title"
         return 0
     fi
@@ -1098,56 +1182,48 @@ run_stage() {
     "$runner"
 
     if ! "$verifier"; then
-        fatal "Step completed without a command error, but post-step verification failed: $title"
+        fatal "Post-step verification failed: $title"
     fi
 
     mark_stage_done "$key"
     COMPLETED_COUNT=$(( COMPLETED_COUNT + 1 ))
     "${SUDO[@]}" rm -f -- "$LAST_ERROR_FILE" >/dev/null 2>&1 || true
+    set_progress_detail "Step ${CURRENT_STAGE_NUMBER}/${TOTAL_STAGES}"
     render_progress "$COMPLETED_COUNT" "DONE" "$title"
-    log_success "Step $CURRENT_STAGE_NUMBER/$TOTAL_STAGES completed and checkpointed."
 }
-
 # ==========================================
 # Final report
 # ==========================================
 show_summary() {
+    CURRENT_STAGE_TITLE="Marzban Node installation"
+    set_progress_detail ""
+    render_progress "$TOTAL_STAGES" "COMPLETE" "$CURRENT_STAGE_TITLE"
+    finish_progress_line
+    clear_progress_line
+    printf '%bInstallation completed successfully.%b\n' "$C_GREEN" "$C_RESET"
+    internal_log OK "Marzban Node installation completed successfully."
+
     local ip=""
     ip="$(curl -4fsS --connect-timeout 5 --max-time 10 https://api.ipify.org 2>/dev/null || true)"
-
-    printf '\n'
-    render_progress "$TOTAL_STAGES" "COMPLETE" "Marzban Node installation"
-    log_success "Marzban Node installation completed successfully."
-    [[ -n "$ip" ]] && log_success "Public IPv4: $ip" || log_warn "Could not determine public IPv4."
+    [[ -n "$ip" ]] && internal_log INFO "Public IPv4: $ip"
 
     if "${SUDO[@]}" test -f "$MARZBAN_NODE_DATA_DIR/ssl_cert.pem"; then
-        log_info "Node SSL certificate:"
-        "${SUDO[@]}" cat "$MARZBAN_NODE_DATA_DIR/ssl_cert.pem"
+        internal_log INFO "Node ssl_cert.pem exists."
     else
-        log_warn "Node ssl_cert.pem has not been generated yet. Check container logs if it remains missing."
+        internal_log WARN "Node ssl_cert.pem has not been generated yet."
     fi
-
-    printf '\n'
-    "${SUDO[@]}" docker compose -f "$MARZBAN_NODE_DIR/docker-compose.yml" ps
-    printf '\n'
-    log_info "Resume/checkpoint state: $STATE_FILE"
-    log_info "Status command: $0 --status"
-    log_info "Restart workflow: $0 --restart"
 }
-
 # ==========================================
 # Main
 # ==========================================
 main() {
-    log_info "Marzban Node Installer v$INSTALLER_VERSION"
     log_info "APT lock policy: wait up to ${APT_LOCK_TIMEOUT}s; never delete dpkg/apt lock files."
 
     if [[ "$STATUS_ONLY" == true ]]; then
         if ! load_saved_settings; then
-            AUTO_MODE=false
+            AUTO_MODE=true
             SETUP_SECURITY=false
             INSTALL_SPEEDTEST=false
-            log_warn "No saved installer choices were found; status is based on checkpoint presence and safe defaults."
         fi
         configure_apt_mode
         show_status
@@ -1160,9 +1236,6 @@ main() {
     reconcile_checkpoints
     COMPLETED_COUNT="$(count_completed_stages)"
 
-    if (( COMPLETED_COUNT > 0 )); then
-        log_info "Resume detected: $COMPLETED_COUNT/$TOTAL_STAGES stage(s) already completed and verified."
-    fi
     render_progress "$COMPLETED_COUNT" "READY" "Installer progress"
 
     local i

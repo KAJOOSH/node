@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-readonly INSTALLER_VERSION="2.3.0"
+readonly INSTALLER_VERSION="2.4.1"
 readonly XRAY_VERSION="${XRAY_VERSION:-26.3.27}"
 readonly TRUSTED_IP="${TRUSTED_IP:-91.107.178.21}"
 readonly MARZBAN_NODE_DIR="${MARZBAN_NODE_DIR:-${HOME}/Marzban-node}"
@@ -47,6 +47,7 @@ RESTART_REQUESTED=false
 AUTO_MODE=true
 SETUP_SECURITY=false
 INSTALL_SPEEDTEST=true
+DOCKER_REPO_FORCE_IPV4=false
 SPINNER_INDEX=0
 cleanup_files=()
 
@@ -627,35 +628,88 @@ wait_for_docker() {
     return 1
 }
 
-remove_conflicting_docker_packages() {
-    local candidates=(docker.io docker-compose docker-compose-v2 docker-doc docker-buildx podman-docker containerd runc) installed=() pkg
-    for pkg in "${candidates[@]}"; do
-        if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'ok installed'; then installed+=("$pkg"); fi
+installed_packages_from_list() {
+    local pkg
+    for pkg in "$@"; do
+        if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'ok installed'; then
+            printf '%s\n' "$pkg"
+        fi
     done
+}
+
+remove_docker_distro_conflicts() {
+    local candidates=(docker.io docker-compose docker-compose-v2 docker-doc docker-buildx podman-docker containerd runc) installed=()
+    mapfile -t installed < <(installed_packages_from_list "${candidates[@]}")
     if (( ${#installed[@]} > 0 )); then
-        CURRENT_ACTION="Removing conflicting Docker packages"; set_stage_progress 25
+        CURRENT_ACTION="Removing Ubuntu Docker packages that conflict with Docker CE"; set_stage_progress 38
         apt_remove "${installed[@]}"
     fi
 }
 
-install_docker() {
-    local codename arch key_tmp source_tmp
-    if verify_docker; then
-        log_success "Docker Engine and Compose are already ready."
+remove_docker_ce_conflicts() {
+    local candidates=(docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras) installed=()
+    mapfile -t installed < <(installed_packages_from_list "${candidates[@]}")
+    if (( ${#installed[@]} > 0 )); then
+        CURRENT_ACTION="Removing Docker CE packages before Ubuntu fallback"; set_stage_progress 42
+        apt_remove "${installed[@]}"
+    fi
+}
+
+clear_docker_official_repository() {
+    run_cmd "${SUDO[@]}" rm -f /etc/apt/sources.list.d/docker.sources /etc/apt/sources.list.d/docker.list
+}
+
+enable_ubuntu_universe_if_needed() {
+    if apt-cache show docker.io >/dev/null 2>&1 && apt-cache show docker-compose-v2 >/dev/null 2>&1; then
         return 0
     fi
-    codename="${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}"
-    [[ -n "$codename" ]] || fatal "Ubuntu codename could not be detected from /etc/os-release."
-    arch="$(dpkg --print-architecture)"
-    CURRENT_ACTION="Preparing official Docker APT repository"; set_stage_progress 15
-    remove_conflicting_docker_packages
+    CURRENT_ACTION="Enabling Ubuntu universe repository"; set_stage_progress 52
+    if ! command -v add-apt-repository >/dev/null 2>&1; then
+        apt_install software-properties-common
+    fi
+    run_cmd "${SUDO[@]}" add-apt-repository -y universe
+    apt_update
+    apt-cache show docker.io >/dev/null 2>&1 || fatal "Ubuntu package docker.io is not available for this release."
+    apt-cache show docker-compose-v2 >/dev/null 2>&1 || fatal "Ubuntu package docker-compose-v2 is not available for this release."
+}
+
+install_docker_from_ubuntu() {
+    CURRENT_ACTION="Switching to Ubuntu Docker packages"; set_stage_progress 40
+    clear_docker_official_repository
+    remove_docker_ce_conflicts
+    CURRENT_ACTION="Refreshing Ubuntu package index"; set_stage_progress 48
+    apt_update
+    enable_ubuntu_universe_if_needed
+    CURRENT_ACTION="Installing Docker and Compose from Ubuntu"; set_stage_progress 68
+    apt_install docker.io docker-compose-v2
+    CURRENT_ACTION="Enabling Docker service"; set_stage_progress 86
+    run_cmd "${SUDO[@]}" systemctl enable --now docker
+    CURRENT_ACTION="Verifying Ubuntu Docker packages"; set_stage_progress 92
+    wait_for_docker || fatal "Ubuntu Docker packages were installed, but Docker or Compose is not usable."
+    log_success "Docker Engine and Docker Compose are ready from Ubuntu repositories."
+}
+
+docker_repo_apt_update() {
+    if [[ "$DOCKER_REPO_FORCE_IPV4" == true ]]; then
+        apt_exec -o Acquire::ForceIPv4=true update
+    else
+        apt_update
+    fi
+}
+
+docker_repo_apt_install() {
+    if [[ "$DOCKER_REPO_FORCE_IPV4" == true ]]; then
+        apt_exec -o Acquire::ForceIPv4=true install "${apt_yes[@]}" "${apt_dpkg_opts[@]}" "$@"
+    else
+        apt_install "$@"
+    fi
+}
+
+install_docker_from_official_repo() {
+    local codename="$1" arch="$2" key_tmp="$3" source_tmp="$4"
+    CURRENT_ACTION="Preparing official Docker APT repository"; set_stage_progress 36
+    remove_docker_distro_conflicts
     run_cmd "${SUDO[@]}" install -m 0755 -d /etc/apt/keyrings
-    key_tmp="$(mktemp)"
-    source_tmp="$(mktemp)"
-    cleanup_files+=("$key_tmp" "$source_tmp")
-    CURRENT_ACTION="Downloading Docker signing key"; set_stage_progress 35
-    run_cmd curl -fsSL --retry 4 --retry-delay 2 --connect-timeout 15 --max-time 180 https://download.docker.com/linux/ubuntu/gpg -o "$key_tmp"
-    [[ -s "$key_tmp" ]] || fatal "Docker signing key download returned an empty file."
     run_cmd "${SUDO[@]}" install -m 0644 "$key_tmp" /etc/apt/keyrings/docker.asc
     cat > "$source_tmp" <<EOF_DOCKER_SOURCE
 Types: deb
@@ -666,15 +720,65 @@ Architectures: ${arch}
 Signed-By: /etc/apt/keyrings/docker.asc
 EOF_DOCKER_SOURCE
     run_cmd "${SUDO[@]}" install -m 0644 "$source_tmp" /etc/apt/sources.list.d/docker.sources
-    CURRENT_ACTION="Refreshing Docker package index"; set_stage_progress 50
-    apt_update
-    CURRENT_ACTION="Installing Docker Engine and Compose plugin"; set_stage_progress 65
-    apt_install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    CURRENT_ACTION="Refreshing Docker package index"; set_stage_progress 52
+    if ! docker_repo_apt_update; then
+        log_warn "Official Docker APT repository is not reachable. Falling back to Ubuntu packages."
+        install_docker_from_ubuntu
+        return 0
+    fi
+    CURRENT_ACTION="Installing Docker Engine and Compose plugin"; set_stage_progress 68
+    if ! docker_repo_apt_install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
+        log_warn "Docker CE package installation failed. Falling back to Ubuntu packages."
+        install_docker_from_ubuntu
+        return 0
+    fi
     CURRENT_ACTION="Enabling Docker service"; set_stage_progress 86
     run_cmd "${SUDO[@]}" systemctl enable --now docker
     CURRENT_ACTION="Verifying Docker daemon and Compose"; set_stage_progress 92
-    wait_for_docker || fatal "Docker packages were installed, but the Docker daemon or Compose plugin is not usable."
-    log_success "Docker Engine and Docker Compose are ready."
+    if ! wait_for_docker; then
+        log_warn "Docker CE verification failed. Falling back to Ubuntu packages."
+        install_docker_from_ubuntu
+        return 0
+    fi
+    log_success "Docker Engine and Docker Compose are ready from Docker's official repository."
+}
+
+install_docker() {
+    local codename arch key_tmp source_tmp docker_key_url
+    if verify_docker; then
+        log_success "Docker Engine and Compose are already ready."
+        return 0
+    fi
+    codename="${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}"
+    [[ -n "$codename" ]] || fatal "Ubuntu codename could not be detected from /etc/os-release."
+    arch="$(dpkg --print-architecture)"
+    docker_key_url="${DOCKER_GPG_URL:-https://download.docker.com/linux/ubuntu/gpg}"
+    key_tmp="$(mktemp)"
+    source_tmp="$(mktemp)"
+    cleanup_files+=("$key_tmp" "$source_tmp")
+    CURRENT_ACTION="Checking official Docker repository access"; set_stage_progress 20
+    DOCKER_REPO_FORCE_IPV4=false
+    if run_cmd curl -fsSL --retry 2 --retry-delay 2 --connect-timeout 12 --max-time 60 "$docker_key_url" -o "$key_tmp"; then
+        :
+    else
+        log_warn "Default route to Docker failed. Retrying over IPv4."
+        : > "$key_tmp"
+        CURRENT_ACTION="Retrying Docker repository over IPv4"; set_stage_progress 26
+        if run_cmd curl -4 -fsSL --retry 2 --retry-delay 2 --connect-timeout 12 --max-time 60 "$docker_key_url" -o "$key_tmp"; then
+            DOCKER_REPO_FORCE_IPV4=true
+            log_warn "Docker repository works over IPv4; forcing IPv4 for Docker APT operations."
+        fi
+    fi
+    if [[ -s "$key_tmp" ]] && grep -q -- 'BEGIN PGP PUBLIC KEY BLOCK' "$key_tmp"; then
+        install_docker_from_official_repo "$codename" "$arch" "$key_tmp" "$source_tmp"
+        return 0
+    fi
+    log_warn "Official Docker repository is blocked, unreachable, or returned an invalid key. Falling back to Ubuntu packages."
+    LAST_COMMAND_TEXT=""
+    LAST_COMMAND_LOG=""
+    LAST_COMMAND_RC=0
+    ACTIVE_OUTPUT_FILE=""
+    install_docker_from_ubuntu
 }
 
 ufw_is_active() {

@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-readonly INSTALLER_VERSION="2.4.1"
+readonly INSTALLER_VERSION="2.5.0"
 readonly XRAY_VERSION="${XRAY_VERSION:-26.3.27}"
 readonly TRUSTED_IP="${TRUSTED_IP:-91.107.178.21}"
 readonly MARZBAN_NODE_DIR="${MARZBAN_NODE_DIR:-${HOME}/Marzban-node}"
@@ -10,7 +10,7 @@ readonly MARZBAN_DATA_DIR="${MARZBAN_DATA_DIR:-/var/lib/marzban}"
 readonly MARZBAN_NODE_DATA_DIR="${MARZBAN_NODE_DATA_DIR:-/var/lib/marzban-node}"
 readonly XRAY_DIR="${MARZBAN_DATA_DIR}/xray-core"
 readonly ASSETS_DIR="${MARZBAN_DATA_DIR}/assets"
-readonly CLIENT_CERT_URL="https://github.com/KAJOOSH/node/raw/refs/heads/main/certificate/ssl_client_cert.pem"
+readonly CLIENT_CERT_URL="https://raw.githubusercontent.com/KAJOOSH/node/refs/heads/main/certificate/ssl_client_cert.pem"
 readonly CLIENT_CERT_FILE="${MARZBAN_NODE_DATA_DIR}/ssl_client_cert.pem"
 readonly STATE_DIR="${INSTALLER_STATE_DIR:-/var/lib/marzban-node-installer}"
 readonly STATE_FILE="${STATE_DIR}/completed.stages"
@@ -48,6 +48,7 @@ AUTO_MODE=true
 SETUP_SECURITY=false
 INSTALL_SPEEDTEST=true
 DOCKER_REPO_FORCE_IPV4=false
+NETWORK_FORCE_IPV4=false
 SPINNER_INDEX=0
 cleanup_files=()
 
@@ -582,11 +583,58 @@ apt_update() { apt_exec update; }
 apt_install() { apt_exec install "${apt_yes[@]}" "${apt_dpkg_opts[@]}" "$@"; }
 apt_remove() { apt_exec remove "${apt_yes[@]}" "${apt_dpkg_opts[@]}" "$@"; }
 
+download_url() {
+    local url="$1" output="$2" rc=1
+    local -a curl_args=(
+        -fL --silent --show-error
+        --retry 4 --retry-all-errors --retry-delay 2
+        --connect-timeout 12 --max-time 300
+        --speed-time 45 --speed-limit 512
+        -o "$output" "$url"
+    )
+
+    rm -f -- "$output"
+
+    if [[ "$NETWORK_FORCE_IPV4" == true ]]; then
+        run_cmd curl -4 "${curl_args[@]}" && return 0
+        rc=$?
+    else
+        if run_cmd curl "${curl_args[@]}"; then
+            return 0
+        else
+            rc=$?
+        fi
+
+        log_warn "Download failed on the default network path; retrying over IPv4: $url"
+        rm -f -- "$output"
+        if run_cmd curl -4 "${curl_args[@]}"; then
+            NETWORK_FORCE_IPV4=true
+            log_warn "IPv4 download succeeded. Remaining direct downloads will prefer IPv4."
+            return 0
+        else
+            rc=$?
+        fi
+    fi
+
+    if command -v wget >/dev/null 2>&1; then
+        log_warn "curl could not download the file; trying wget over IPv4: $url"
+        rm -f -- "$output"
+        if run_cmd wget -4 --https-only --tries=4 --timeout=20 --read-timeout=90 -O "$output" "$url"; then
+            NETWORK_FORCE_IPV4=true
+            return 0
+        else
+            rc=$?
+        fi
+    fi
+
+    return "$rc"
+}
+
 download_atomic() {
     local url="$1" destination="$2" mode="${3:-0644}" tmp
     tmp="$(mktemp)"
     cleanup_files+=("$tmp")
-    run_cmd curl -fsSL --retry 4 --retry-delay 2 --connect-timeout 15 --max-time 300 -o "$tmp" "$url"
+    download_url "$url" "$tmp" || fatal "Unable to download: $url"
     [[ -s "$tmp" ]] || fatal "Downloaded file is empty: $url"
     run_cmd "${SUDO[@]}" install -m "$mode" "$tmp" "$destination"
     rm -f -- "$tmp"
@@ -826,7 +874,7 @@ install_speedtest() {
     key_tmp="$(mktemp)"
     cleanup_files+=("$key_tmp")
     CURRENT_ACTION="Configuring Ookla repository"; set_stage_progress 50
-    run_cmd curl -fsSL --retry 4 --retry-delay 2 --connect-timeout 15 --max-time 180 https://packagecloud.io/ookla/speedtest-cli/gpgkey -o "$key_tmp"
+    download_url https://packagecloud.io/ookla/speedtest-cli/gpgkey "$key_tmp" || fatal "Unable to download Ookla repository signing key."
     run_cmd "${SUDO[@]}" gpg --batch --yes --dearmor -o /usr/share/keyrings/ookla-speedtest-archive-keyring.gpg "$key_tmp"
     printf '%s\n' 'deb [signed-by=/usr/share/keyrings/ookla-speedtest-archive-keyring.gpg] https://packagecloud.io/ookla/speedtest-cli/ubuntu/ jammy main' | "${SUDO[@]}" tee /etc/apt/sources.list.d/ookla_speedtest-cli.list >/dev/null
     CURRENT_ACTION="Installing Ookla Speedtest"; set_stage_progress 75
@@ -899,7 +947,7 @@ install_xray_core() {
     extract_dir="$(mktemp -d)"
     cleanup_files+=("$zip_tmp" "$extract_dir")
     CURRENT_ACTION="Downloading Xray-core v$XRAY_VERSION"; set_stage_progress 20
-    run_cmd curl -fsSL --retry 4 --retry-delay 2 --connect-timeout 15 --max-time 300 -o "$zip_tmp" "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/${XRAY_ARCHIVE}"
+    download_url "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/${XRAY_ARCHIVE}" "$zip_tmp" || fatal "Unable to download Xray-core v${XRAY_VERSION}."
     CURRENT_ACTION="Extracting Xray-core"; set_stage_progress 55
     run_cmd unzip -q -o "$zip_tmp" xray -d "$extract_dir"
     [[ -s "$extract_dir/xray" ]] || fatal "Xray archive does not contain the xray executable."

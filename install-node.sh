@@ -3,7 +3,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 readonly INSTALLER_VERSION="2.5.0"
-readonly XRAY_VERSION="${XRAY_VERSION:-26.11.9}"
+readonly XRAY_VERSION="${XRAY_VERSION:-26.3.27}"
 readonly TRUSTED_IP="${TRUSTED_IP:-91.107.178.21}"
 readonly MARZBAN_NODE_DIR="${MARZBAN_NODE_DIR:-${HOME}/Marzban-node}"
 readonly MARZBAN_DATA_DIR="${MARZBAN_DATA_DIR:-/var/lib/marzban}"

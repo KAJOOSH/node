@@ -9,9 +9,9 @@ usage() {
 Usage: sudo bash update-tif-medium.sh [--container NAME | --assets-dir PATH]
 
 Run on the host that runs Marzban Node. With no options, the script finds
-the marzban-node Compose container and its persistent Xray assets directory.
+the marzban-node Compose container, updates its Xray assets, and restarts it.
 Use --container if the host runs multiple nodes or uses a custom service name.
-Use --assets-dir to write directly to a known Xray assets directory.
+Use --assets-dir to update a known directory without restarting a container.
 HELP
 }
 
@@ -23,6 +23,27 @@ die() {
 fetch() {
     curl -fsSL --retry 3 --connect-timeout 12 --max-time 300 \
         --proto '=https' --proto-redir '=https' "$@"
+}
+
+restart_node() {
+    local container="$1" asset_path="$2" status attempt
+    printf 'Restarting Marzban Node (%s)...\n' "$container"
+    docker container restart -- "$container" >/dev/null \
+        || die "List updated, but Docker could not restart container $container."
+
+    for ((attempt = 1; attempt <= 30; attempt++)); do
+        status="$(docker container inspect --format \
+            '{{.State.Status}}{{if .State.Health}} {{.State.Health.Status}}{{end}}' -- "$container")" \
+            || die "List updated, but the status of container $container could not be checked."
+        if [[ "$status" == running || "$status" == "running healthy" ]] &&
+            docker container exec -- "$container" test -r "$asset_path" 2>/dev/null; then
+            printf 'Marzban Node (%s) is running and can read %s.\n' "$container" "$ASSET"
+            return 0
+        fi
+        if (( attempt < 30 )); then sleep 2; fi
+    done
+
+    die "Container $container is not ready after restart (state: $status). Check its logs with docker logs."
 }
 
 container=""
@@ -44,6 +65,7 @@ case "${1:-}" in
 esac
 (( EUID == 0 )) || die "Run this script with sudo."
 command -v curl >/dev/null || die "Install curl before running this script."
+command -v flock >/dev/null || die "Install flock (util-linux) before running this script."
 
 if [[ -z "$assets_dir" ]]; then
     command -v docker >/dev/null || die "Docker is required for discovery. Use --assets-dir to specify the location directly."
@@ -90,6 +112,8 @@ if [[ -z "$assets_dir" ]]; then
 fi
 
 [[ -d "$assets_dir" ]] || die "Assets directory $assets_dir is missing on this host."
+exec {update_lock}>>"$assets_dir/.hagezi-tif.lock" || die "Unable to open the update lock in $assets_dir."
+flock -x "$update_lock" || die "Unable to lock the update in $assets_dir."
 
 release_url="$(fetch -o /dev/null -w '%{url_effective}' "$RELEASES_URL/latest")" \
     || die "Unable to find the latest release."
@@ -114,14 +138,9 @@ actual="$(sha256sum < "$work_dir/$ASSET")"
 chmod 0644 -- "$work_dir/$ASSET"
 mv -fT -- "$work_dir/$ASSET" "$assets_dir/$ASSET"
 
+printf 'Installed TIF Medium %s at %s\n' "$tag" "$assets_dir/$ASSET"
 if [[ -n "$container" ]]; then
-    running="$(docker container inspect --format '{{.State.Running}}' -- "$container")" \
-        || die "The verified file is installed, but container status could not be checked."
-    if [[ "$running" == true ]]; then
-        docker exec "$container" test -r "$container_assets/$ASSET" \
-            || die "The verified file is installed, but the container cannot read $container_assets/$ASSET."
-    fi
+    restart_node "$container" "$container_assets/$ASSET"
+else
+    printf 'Reload Xray if the routing rule is already active.\n'
 fi
-
-printf 'TIF Medium %s is ready in %s\n' "$tag" "$assets_dir/$ASSET"
-printf 'If the routing rule is already active, reload Xray to pick up the new list.\n'

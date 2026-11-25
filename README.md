@@ -2,7 +2,7 @@
 
 ## New installations
 
-Run the installer on an Ubuntu host. It supports x86-64 and ARM64 and installs the HaGeZi TIF Medium list alongside the Xray assets.
+Run the installer on an Ubuntu host. It supports x86-64 and ARM64 and installs the latest published HaGeZi TIF Medium release alongside the Xray assets.
 
 ```bash
 wget -O install-node.sh https://raw.githubusercontent.com/KAJOOSH/node/main/install-node.sh && bash install-node.sh
@@ -10,13 +10,13 @@ wget -O install-node.sh https://raw.githubusercontent.com/KAJOOSH/node/main/inst
 
 ## Existing installations
 
-Run this on each host running a node. It finds the Xray assets directory, downloads the latest verified list, and leaves the running service in place. Use the same command whenever you want to refresh the list.
+Run this on each host running a node. The script downloads and verifies the latest list, then restarts the node and checks that the container can read the file. Connections through that node may briefly drop during the restart.
 
 ```bash
 wget -O update-tif-medium.sh https://raw.githubusercontent.com/KAJOOSH/node/main/update-tif-medium.sh && sudo bash update-tif-medium.sh
 ```
 
-If Docker finds multiple nodes, run `sudo bash update-tif-medium.sh --container NAME` for each one. For a custom setup, the assets directory must be mounted persistently. You can point the script at an existing host directory with `--assets-dir /path/to/xray/assets`.
+If Docker finds multiple nodes, run `sudo bash update-tif-medium.sh --container NAME` for each one. The assets directory must be mounted persistently. Use `--assets-dir /path/to/xray/assets` for a file-only update.
 
 ## Enable blocking
 
@@ -32,7 +32,7 @@ In the panel's Xray configuration, add this object to `routing.rules` above any 
 }
 ```
 
-Save and apply the configuration. When you refresh the list later, reload each Xray core that uses it.
+Save and apply the configuration. When you update the panel’s copy later, reload its Xray core.
 
 ## Other scripts
 

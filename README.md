@@ -2,7 +2,7 @@
 
 ## New installations
 
-Run the installer on an Ubuntu host. It supports x86-64 and ARM64 and installs the latest published HaGeZi TIF Medium release alongside the Xray assets.
+Run the installer on an Ubuntu host. It supports x86-64 and ARM64 and installs HaGeZi TIF Medium and TIF IPv4 from the latest release alongside the Xray assets.
 
 ```bash
 wget -O install-node.sh https://raw.githubusercontent.com/KAJOOSH/node/main/install-node.sh && bash install-node.sh
@@ -10,7 +10,7 @@ wget -O install-node.sh https://raw.githubusercontent.com/KAJOOSH/node/main/inst
 
 ## Existing installations
 
-Run this on each host running a node. The script downloads and verifies the latest list, then restarts the node and checks that the container can read the file. Connections through that node may briefly drop during the restart.
+Run this on each host running a node. The script downloads and verifies both TIF files from the latest release, then restarts the node and checks that the container can read them. Connections through that node may briefly drop during the restart.
 
 ```bash
 wget -O update-tif-medium.sh https://raw.githubusercontent.com/KAJOOSH/node/main/update-tif-medium.sh && sudo bash update-tif-medium.sh
@@ -20,9 +20,11 @@ If Docker finds multiple nodes, run `sudo bash update-tif-medium.sh --container 
 
 ## Enable blocking
 
-Make `hagezi-tif.dat` available to the panel's Xray core and every node that receives the same routing configuration. The [HaGeZi Xray release](https://github.com/KAJOOSH/hagezi-xray-geosite/releases/latest) also provides the file for the panel's assets folder.
+Install the files on the panel and every node that receives its Xray configuration before enabling their rules. On the panel, run the updater with `--assets-dir` pointed at its Xray assets directory on the host.
 
-In the panel's Xray configuration, add this object to `routing.rules` above any general allow rules. Use the tag of your `blackhole` outbound in place of `BLOCK` if it differs.
+In the panel's Xray configuration, add each rule as a separate entry in `routing.rules` above any general allow rules. Use the tag of your `blackhole` outbound in place of `BLOCK` if it differs.
+
+**TIF Medium** blocks listed domains.
 
 ```json
 {
@@ -32,11 +34,21 @@ In the panel's Xray configuration, add this object to `routing.rules` above any 
 }
 ```
 
-Save and apply the configuration. When you update the panel’s copy later, reload its Xray core.
+**TIF IPv4** blocks listed IPv4 addresses.
+
+```json
+{
+  "type": "field",
+  "ip": ["ext:hagezi-tif-ipv4.dat:tif-ipv4"],
+  "outboundTag": "BLOCK"
+}
+```
+
+Save and apply the configuration. When you refresh the files on the panel later, reload its Xray core.
 
 ## Other scripts
 
-- [Legacy ARM64 installer](install-node-arm64.sh). Use the existing-installation command above to add TIF Medium.
+- [Legacy ARM64 installer](install-node-arm64.sh). Use the existing-installation command above to add both TIF files.
 
 #### block-all-except-iran
 ```bash

@@ -2,21 +2,21 @@
 set -euo pipefail
 
 readonly RELEASES_URL="https://github.com/KAJOOSH/hagezi-xray-geosite/releases"
-readonly ASSET="hagezi-tif.dat"
+readonly -a TIF_ASSETS=(hagezi-tif.dat hagezi-tif-ipv4.dat)
 
 usage() {
     cat <<'HELP'
 Usage: sudo bash update-tif-medium.sh [--container NAME | --assets-dir PATH]
 
 Run on the host that runs Marzban Node. With no options, the script finds
-the marzban-node Compose container, updates its Xray assets, and restarts it.
+the marzban-node Compose container, updates TIF Medium and TIF IPv4, and restarts it.
 Use --container if the host runs multiple nodes or uses a custom service name.
 Use --assets-dir to update a known directory without restarting a container.
 HELP
 }
 
 die() {
-    printf 'TIF Medium: %s\n' "$*" >&2
+    printf 'HaGeZi TIF: %s\n' "$*" >&2
     exit 1
 }
 
@@ -26,18 +26,21 @@ fetch() {
 }
 
 restart_node() {
-    local container="$1" asset_path="$2" status attempt
+    local container="$1" asset_dir="$2" status attempt asset
+    local -a asset_paths=()
+    for asset in "${TIF_ASSETS[@]}"; do asset_paths+=("$asset_dir/$asset"); done
     printf 'Restarting Marzban Node (%s)...\n' "$container"
     docker container restart -- "$container" >/dev/null \
-        || die "List updated, but Docker could not restart container $container."
+        || die "Files updated, but Docker could not restart container $container."
 
     for ((attempt = 1; attempt <= 30; attempt++)); do
         status="$(docker container inspect --format \
             '{{.State.Status}}{{if .State.Health}} {{.State.Health.Status}}{{end}}' -- "$container")" \
-            || die "List updated, but the status of container $container could not be checked."
+            || die "Files updated, but the status of container $container could not be checked."
         if [[ "$status" == running || "$status" == "running healthy" ]] &&
-            docker container exec -- "$container" test -r "$asset_path" 2>/dev/null; then
-            printf 'Marzban Node (%s) is running and can read %s.\n' "$container" "$ASSET"
+            docker container exec -- "$container" sh -c 'for path; do test -r "$path" || exit 1; done' \
+                sh "${asset_paths[@]}" 2>/dev/null; then
+            printf 'Marzban Node (%s) is running and can read both TIF files.\n' "$container"
             return 0
         fi
         if (( attempt < 30 )); then sleep 2; fi
@@ -94,8 +97,10 @@ if [[ -z "$assets_dir" ]]; then
     mount_prefix=""
     while IFS=$'\t' read -r destination type source; do
         [[ -n "$destination" ]] || continue
-        [[ "$destination" != "$container_assets/$ASSET" ]] \
-            || die "Bind the Xray assets directory instead of the individual $ASSET file."
+        for asset in "${TIF_ASSETS[@]}"; do
+            [[ "$destination" != "$container_assets/$asset" ]] \
+                || die "Bind the Xray assets directory instead of the individual $asset file."
+        done
         prefix="${destination%/}"
         if [[ "$container_assets" == "$prefix" || "$container_assets" == "$prefix/"* ]]; then
             if [[ -z "$mount_type" ]] || (( ${#prefix} > ${#mount_prefix} )); then
@@ -122,25 +127,34 @@ tag="${release_url#"$RELEASES_URL/tag/"}"
 
 work_dir="$(mktemp -d "$assets_dir/.hagezi-tif.XXXXXXXX")" || die "Unable to write to $assets_dir."
 cleanup() {
-    rm -f -- "$work_dir/$ASSET" "$work_dir/$ASSET.sha256"
+    local asset
+    for asset in "${TIF_ASSETS[@]}"; do rm -f -- "$work_dir/$asset"; done
+    rm -f -- "$work_dir/checksums.sha256"
     rmdir -- "$work_dir"
 }
 trap cleanup EXIT
 
-fetch -o "$work_dir/$ASSET" "$RELEASES_URL/download/$tag/$ASSET" || die "Unable to download $ASSET from $tag."
-fetch -o "$work_dir/$ASSET.sha256" "$RELEASES_URL/download/$tag/$ASSET.sha256" || die "Unable to download the checksum."
-expected="$(<"$work_dir/$ASSET.sha256")"
-[[ "$expected" =~ ^([[:xdigit:]]{64})[[:blank:]]+hagezi-tif\.dat$ ]] || die "Invalid checksum file."
-expected="${BASH_REMATCH[1],,}"
-actual="$(sha256sum < "$work_dir/$ASSET")"
-[[ -s "$work_dir/$ASSET" && "${actual%% *}" == "$expected" ]] || die "SHA-256 verification failed."
+release_base="$RELEASES_URL/download/$tag"
+checksums="$work_dir/checksums.sha256"
+fetch -o "$checksums" "$release_base/checksums.sha256" || die "Unable to download HaGeZi TIF checksums."
+for asset in "${TIF_ASSETS[@]}"; do
+    target="$assets_dir/$asset"
+    [[ ! -d "$target" || -L "$target" ]] || die "Cannot replace directory $target with an Xray asset."
+    expected="$(awk -v file="$asset" '$2 == file { print $1 }' "$checksums")"
+    [[ "$expected" =~ ^[[:xdigit:]]{64}$ ]] || die "Missing or invalid checksum for $asset in $tag."
+    fetch -o "$work_dir/$asset" "$release_base/$asset" || die "Unable to download $asset from $tag."
+    actual="$(sha256sum < "$work_dir/$asset")"
+    [[ -s "$work_dir/$asset" && "${actual%% *}" == "${expected,,}" ]] || die "$asset failed SHA-256 verification."
+    chmod 0644 -- "$work_dir/$asset"
+done
 
-chmod 0644 -- "$work_dir/$ASSET"
-mv -fT -- "$work_dir/$ASSET" "$assets_dir/$ASSET"
+for asset in "${TIF_ASSETS[@]}"; do
+    mv -fT -- "$work_dir/$asset" "$assets_dir/$asset"
+    printf 'Installed %s from %s at %s/%s\n' "$asset" "$tag" "$assets_dir" "$asset"
+done
 
-printf 'Installed TIF Medium %s at %s\n' "$tag" "$assets_dir/$ASSET"
 if [[ -n "$container" ]]; then
-    restart_node "$container" "$container_assets/$ASSET"
+    restart_node "$container" "$container_assets"
 else
-    printf 'Reload Xray if the routing rule is already active.\n'
+    printf 'Reload Xray if you already use either TIF rule.\n'
 fi

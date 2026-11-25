@@ -10,6 +10,7 @@ readonly MARZBAN_DATA_DIR="${MARZBAN_DATA_DIR:-/var/lib/marzban}"
 readonly MARZBAN_NODE_DATA_DIR="${MARZBAN_NODE_DATA_DIR:-/var/lib/marzban-node}"
 readonly XRAY_DIR="${MARZBAN_DATA_DIR}/xray-core"
 readonly ASSETS_DIR="${MARZBAN_DATA_DIR}/assets"
+readonly TIF_RELEASES_URL="https://github.com/KAJOOSH/hagezi-xray-geosite/releases"
 readonly CLIENT_CERT_URL="https://raw.githubusercontent.com/KAJOOSH/node/refs/heads/main/certificate/ssl_client_cert.pem"
 readonly CLIENT_CERT_FILE="${MARZBAN_NODE_DATA_DIR}/ssl_client_cert.pem"
 readonly STATE_DIR="${INSTALLER_STATE_DIR:-/var/lib/marzban-node-installer}"
@@ -904,6 +905,39 @@ prepare_marzban_repo() {
 
 verify_marzban_repo() { [[ -d "$MARZBAN_NODE_DIR" ]]; }
 
+install_tif_medium() {
+    local release_url tag download_dir asset checksum expected actual
+    local -a network_args=()
+    if [[ "$NETWORK_FORCE_IPV4" == true ]]; then network_args+=(-4); fi
+    if ! release_url="$(curl "${network_args[@]}" -fsSL --retry 3 --connect-timeout 12 --max-time 60 \
+        --proto '=https' --proto-redir '=https' -o /dev/null -w '%{url_effective}' "$TIF_RELEASES_URL/latest")"; then
+        fatal "Unable to find the latest TIF Medium release."
+    fi
+
+    tag="${release_url#"$TIF_RELEASES_URL/tag/"}"
+    [[ "$tag" =~ ^v[0-9]+(\.[0-9]+)+$ ]] || fatal "Unexpected TIF Medium release URL: $release_url"
+    download_dir="$(mktemp -d)"
+    cleanup_files+=("$download_dir")
+    asset="$download_dir/hagezi-tif.dat"
+    checksum="$asset.sha256"
+    download_url "$TIF_RELEASES_URL/download/$tag/hagezi-tif.dat" "$asset" || fatal "Unable to download TIF Medium $tag."
+    download_url "$TIF_RELEASES_URL/download/$tag/hagezi-tif.dat.sha256" "$checksum" || fatal "Unable to download the TIF Medium checksum."
+
+    expected="$(<"$checksum")"
+    [[ "$expected" =~ ^([[:xdigit:]]{64})[[:blank:]]+hagezi-tif\.dat$ ]] || fatal "Invalid TIF Medium checksum file."
+    expected="${BASH_REMATCH[1],,}"
+    actual="$(sha256sum < "$asset")"
+    [[ -s "$asset" && "${actual%% *}" == "$expected" ]] || fatal "TIF Medium failed SHA-256 verification."
+
+    run_cmd "${SUDO[@]}" bash -c '
+        set -eu
+        staged="$(mktemp "$2/.hagezi-tif.XXXXXXXX")"
+        trap '\''rm -f -- "$staged"'\'' EXIT
+        install -m 0644 -- "$1" "$staged"
+        mv -fT -- "$staged" "$2/hagezi-tif.dat"
+    ' bash "$asset" "$ASSETS_DIR"
+}
+
 install_assets() {
     CURRENT_ACTION="Preparing Xray assets"; set_stage_progress 15
     run_cmd "${SUDO[@]}" mkdir -p "$ASSETS_DIR"
@@ -912,11 +946,16 @@ install_assets() {
     download_atomic https://github.com/v2fly/geoip/releases/latest/download/geoip.dat "$ASSETS_DIR/geoip.dat"
     CURRENT_ACTION="Downloading Iran routing data"; set_stage_progress 70
     download_atomic https://github.com/bootmortis/iran-hosted-domains/releases/latest/download/iran.dat "$ASSETS_DIR/iran.dat"
+    CURRENT_ACTION="Installing HaGeZi TIF Medium"; set_stage_progress 82
+    install_tif_medium
     set_stage_progress 92
 }
 
 verify_assets() {
-    "${SUDO[@]}" test -s "$ASSETS_DIR/geosite.dat" && "${SUDO[@]}" test -s "$ASSETS_DIR/geoip.dat" && "${SUDO[@]}" test -s "$ASSETS_DIR/iran.dat"
+    "${SUDO[@]}" test -s "$ASSETS_DIR/geosite.dat" &&
+        "${SUDO[@]}" test -s "$ASSETS_DIR/geoip.dat" &&
+        "${SUDO[@]}" test -s "$ASSETS_DIR/iran.dat" &&
+        "${SUDO[@]}" test -s "$ASSETS_DIR/hagezi-tif.dat"
 }
 
 install_client_certificate() {
@@ -983,10 +1022,20 @@ services:
       XRAY_EXECUTABLE_PATH: "/var/lib/marzban/xray-core/xray"
       XRAY_ASSETS_PATH: "/usr/local/share/xray"
       SERVICE_PROTOCOL: "rest"
+YAML
+    local node_source="${MARZBAN_NODE_DATA_DIR//\$/\$\$}" assets_source="${ASSETS_DIR//\$/\$\$}" data_source="${MARZBAN_DATA_DIR//\$/\$\$}"
+    cat >> "$tmp" <<YAML
     volumes:
-      - /var/lib/marzban-node:/var/lib/marzban-node
-      - /var/lib/marzban/assets:/usr/local/share/xray:ro
-      - /var/lib/marzban:/var/lib/marzban
+      - type: bind
+        source: '${node_source//\'/\'\'}'
+        target: /var/lib/marzban-node
+      - type: bind
+        source: '${assets_source//\'/\'\'}'
+        target: /usr/local/share/xray
+        read_only: true
+      - type: bind
+        source: '${data_source//\'/\'\'}'
+        target: /var/lib/marzban
 YAML
     CURRENT_ACTION="Validating Compose configuration"; set_stage_progress 60
     run_cmd "${SUDO[@]}" docker compose -f "$tmp" config -q
@@ -1015,7 +1064,12 @@ start_marzban_node() {
     run_cmd "${SUDO[@]}" docker compose -f "$compose_file" up -d --remove-orphans
     CURRENT_ACTION="Waiting for Marzban Node"; set_stage_progress 82
     for attempt in 1 2 3 4 5 6 7 8 9 10; do
-        if verify_marzban_node_running; then return 0; fi
+        if verify_marzban_node_running; then
+            run_cmd "${SUDO[@]}" docker compose -f "$compose_file" exec -T marzban-node \
+                test -r /usr/local/share/xray/hagezi-tif.dat \
+                || fatal "The Marzban Node container cannot read hagezi-tif.dat."
+            return 0
+        fi
         sleep 2
     done
     node_log_tmp="$(mktemp)"

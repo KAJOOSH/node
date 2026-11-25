@@ -1,11 +1,43 @@
-#### install-node
+# Marzban Node
+
+## New installations
+
+Run the installer on an Ubuntu host. It supports x86-64 and ARM64 and installs the HaGeZi TIF Medium list alongside the Xray assets.
+
 ```bash
-wget https://raw.githubusercontent.com/KAJOOSH/node/refs/heads/main/install-node.sh && chmod +x install-node.sh && bash install-node.sh
+wget -O install-node.sh https://raw.githubusercontent.com/KAJOOSH/node/main/install-node.sh && bash install-node.sh
 ```
-#### install-node-arm64
+
+## Existing installations
+
+Run this on each host running a node. It finds the Xray assets directory, downloads the latest verified list, and leaves the running service in place. Use the same command whenever you want to refresh the list.
+
 ```bash
-wget https://raw.githubusercontent.com/KAJOOSH/node/refs/heads/main/install-node-arm64.sh && chmod +x install-node-arm64.sh && bash install-node-arm64.sh
+wget -O update-tif-medium.sh https://raw.githubusercontent.com/KAJOOSH/node/main/update-tif-medium.sh && sudo bash update-tif-medium.sh
 ```
+
+If Docker finds multiple nodes, run `sudo bash update-tif-medium.sh --container NAME` for each one. For a custom setup, the assets directory must be mounted persistently. You can point the script at an existing host directory with `--assets-dir /path/to/xray/assets`.
+
+## Enable blocking
+
+Make `hagezi-tif.dat` available to the panel's Xray core and every node that receives the same routing configuration. The [HaGeZi Xray release](https://github.com/KAJOOSH/hagezi-xray-geosite/releases/latest) also provides the file for the panel's assets folder.
+
+In the panel's Xray configuration, add this object to `routing.rules` above any general allow rules. Use the tag of your `blackhole` outbound in place of `BLOCK` if it differs.
+
+```json
+{
+  "type": "field",
+  "domain": ["ext:hagezi-tif.dat:tif-medium"],
+  "outboundTag": "BLOCK"
+}
+```
+
+Save and apply the configuration. When you refresh the list later, reload each Xray core that uses it.
+
+## Other scripts
+
+- [Legacy ARM64 installer](install-node-arm64.sh). Use the existing-installation command above to add TIF Medium.
+
 #### block-all-except-iran
 ```bash
 wget https://raw.githubusercontent.com/KAJOOSH/node/refs/heads/main/block-all-except-iran.sh && chmod +x block-all-except-iran.sh && bash block-all-except-iran.sh

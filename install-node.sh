@@ -10,8 +10,8 @@ readonly MARZBAN_DATA_DIR="${MARZBAN_DATA_DIR:-/var/lib/marzban}"
 readonly MARZBAN_NODE_DATA_DIR="${MARZBAN_NODE_DATA_DIR:-/var/lib/marzban-node}"
 readonly XRAY_DIR="${MARZBAN_DATA_DIR}/xray-core"
 readonly ASSETS_DIR="${MARZBAN_DATA_DIR}/assets"
-readonly TIF_RELEASES_URL="https://github.com/KAJOOSH/hagezi-xray-geosite/releases"
-readonly -a TIF_ASSETS=(hagezi-tif.dat hagezi-tif-ipv4.dat)
+readonly HAGEZI_UPDATER_URL="https://raw.githubusercontent.com/KAJOOSH/node/6d007f02073aae2f166dae45d1fc12d59213d81e/update-tif-medium.sh"
+readonly HAGEZI_ASSET_INDEX=".hagezi-assets.sha256"
 readonly CLIENT_CERT_URL="https://raw.githubusercontent.com/KAJOOSH/node/refs/heads/main/certificate/ssl_client_cert.pem"
 readonly CLIENT_CERT_FILE="${MARZBAN_NODE_DATA_DIR}/ssl_client_cert.pem"
 readonly STATE_DIR="${INSTALLER_STATE_DIR:-/var/lib/marzban-node-installer}"
@@ -906,55 +906,12 @@ prepare_marzban_repo() {
 
 verify_marzban_repo() { [[ -d "$MARZBAN_NODE_DIR" ]]; }
 
-install_tif_assets() {
-    local release_url tag download_dir release_base asset expected actual
-    local -a network_args=()
-    if [[ "$NETWORK_FORCE_IPV4" == true ]]; then network_args+=(-4); fi
-    if ! release_url="$(curl "${network_args[@]}" -fsSL --retry 3 --connect-timeout 12 --max-time 60 \
-        --proto '=https' --proto-redir '=https' -o /dev/null -w '%{url_effective}' "$TIF_RELEASES_URL/latest")"; then
-        fatal "Unable to find the latest HaGeZi TIF release."
-    fi
-
-    tag="${release_url#"$TIF_RELEASES_URL/tag/"}"
-    [[ "$tag" =~ ^v[0-9]+(\.[0-9]+)+$ ]] || fatal "Unexpected HaGeZi TIF release URL: $release_url"
-    release_base="$TIF_RELEASES_URL/download/$tag"
-    download_dir="$(mktemp -d)"
-    cleanup_files+=("$download_dir")
-    download_url "$release_base/checksums.sha256" "$download_dir/checksums.sha256" \
-        || fatal "Unable to download HaGeZi TIF checksums."
-
-    for asset in "${TIF_ASSETS[@]}"; do
-        expected="$(awk -v file="$asset" '$2 == file { print $1 }' "$download_dir/checksums.sha256")"
-        [[ "$expected" =~ ^[[:xdigit:]]{64}$ ]] || fatal "Missing or invalid checksum for $asset in $tag."
-        download_url "$release_base/$asset" "$download_dir/$asset" || fatal "Unable to download $asset from $tag."
-        actual="$(sha256sum < "$download_dir/$asset")"
-        [[ -s "$download_dir/$asset" && "${actual%% *}" == "${expected,,}" ]] \
-            || fatal "$asset failed SHA-256 verification."
-    done
-
-    run_cmd "${SUDO[@]}" bash -c '
-        set -eu
-        download_dir="$1" assets_dir="$2"
-        shift 2
-        exec {update_lock}>>"$assets_dir/.hagezi-tif.lock"
-        flock -x "$update_lock"
-        staged_dir="$(mktemp -d "$assets_dir/.hagezi-tif.XXXXXXXX")"
-        cleanup() {
-            local asset
-            for asset; do rm -f -- "$staged_dir/$asset"; done
-            rmdir -- "$staged_dir"
-        }
-        trap '\''cleanup "$@"'\'' EXIT
-        for asset; do
-            target="$assets_dir/$asset"
-            if [[ -d "$target" && ! -L "$target" ]]; then
-                printf "Cannot replace directory %s with an Xray asset.\n" "$target" >&2
-                exit 1
-            fi
-            install -m 0644 -- "$download_dir/$asset" "$staged_dir/$asset"
-        done
-        for asset; do mv -fT -- "$staged_dir/$asset" "$assets_dir/$asset"; done
-    ' bash "$download_dir" "$ASSETS_DIR" "${TIF_ASSETS[@]}"
+install_hagezi_assets() {
+    local updater
+    updater="$(mktemp)"
+    cleanup_files+=("$updater")
+    download_url "$HAGEZI_UPDATER_URL" "$updater" || fatal "Unable to download the HaGeZi updater."
+    run_cmd "${SUDO[@]}" env "HAGEZI_FORCE_IPV4=$NETWORK_FORCE_IPV4" bash "$updater" --assets-dir "$ASSETS_DIR"
 }
 
 install_assets() {
@@ -965,16 +922,24 @@ install_assets() {
     download_atomic https://github.com/v2fly/geoip/releases/latest/download/geoip.dat "$ASSETS_DIR/geoip.dat"
     CURRENT_ACTION="Downloading Iran routing data"; set_stage_progress 70
     download_atomic https://github.com/bootmortis/iran-hosted-domains/releases/latest/download/iran.dat "$ASSETS_DIR/iran.dat"
-    CURRENT_ACTION="Installing HaGeZi TIF Medium and TIF IPv4"; set_stage_progress 82
-    install_tif_assets
+    CURRENT_ACTION="Installing the complete HaGeZi Xray archive"; set_stage_progress 82
+    install_hagezi_assets
     set_stage_progress 92
 }
 
 verify_assets() {
-    local asset
-    for asset in geosite.dat geoip.dat iran.dat "${TIF_ASSETS[@]}"; do
-        "${SUDO[@]}" test -s "$ASSETS_DIR/$asset" || return 1
-    done
+    local checksum asset extra index
+    local -a files=(geosite.dat geoip.dat iran.dat)
+    index="$("${SUDO[@]}" cat "$ASSETS_DIR/$HAGEZI_ASSET_INDEX" 2>/dev/null)" || return 1
+    while IFS=' ' read -r checksum asset extra; do
+        [[ "$checksum" =~ ^[a-f0-9]{64}$ && "$asset" =~ ^hagezi-[a-z0-9-]+\.dat$ && -z "$extra" ]] || return 1
+        files+=("$asset")
+    done <<< "$index"
+    "${SUDO[@]}" bash -c '
+        assets_dir="$1"
+        shift
+        for file; do test -s "$assets_dir/$file" || exit 1; done
+    ' bash "$ASSETS_DIR" "${files[@]}"
 }
 
 install_client_certificate() {
@@ -1076,7 +1041,7 @@ verify_marzban_node_running() {
 }
 
 start_marzban_node() {
-    local compose_file="$MARZBAN_NODE_DIR/docker-compose.yml" attempt node_log_tmp asset
+    local compose_file="$MARZBAN_NODE_DIR/docker-compose.yml" attempt node_log_tmp
     CURRENT_ACTION="Pulling Marzban Node image"; set_stage_progress 18
     run_cmd "${SUDO[@]}" docker compose -f "$compose_file" pull
     CURRENT_ACTION="Starting Marzban Node"; set_stage_progress 58
@@ -1084,11 +1049,15 @@ start_marzban_node() {
     CURRENT_ACTION="Waiting for Marzban Node"; set_stage_progress 82
     for attempt in 1 2 3 4 5 6 7 8 9 10; do
         if verify_marzban_node_running; then
-            for asset in "${TIF_ASSETS[@]}"; do
-                run_cmd "${SUDO[@]}" docker compose -f "$compose_file" exec -T marzban-node \
-                    test -r "/usr/local/share/xray/$asset" \
-                    || fatal "The Marzban Node container cannot read $asset."
-            done
+            run_cmd "${SUDO[@]}" docker compose -f "$compose_file" exec -T marzban-node sh -c '
+                assets_dir="$1"
+                index="$assets_dir/$2"
+                test -s "$index" || exit 1
+                while IFS=" " read -r checksum file; do
+                    test -r "$assets_dir/$file" || exit 1
+                done < "$index"
+            ' sh /usr/local/share/xray "$HAGEZI_ASSET_INDEX" \
+                || fatal "The Marzban Node container cannot read all installed HaGeZi assets."
             return 0
         fi
         sleep 2
